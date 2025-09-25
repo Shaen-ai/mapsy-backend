@@ -32,8 +32,6 @@ public/uploads/
 /storage/*.key
 /storage/gcs-key.json
 
-# Credentials
-/credentials/
 
 # IDE and editor files
 .vscode/
