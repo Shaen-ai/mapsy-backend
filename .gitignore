@@ -16,7 +16,6 @@ build/
 *.js.map
 
 # Environment files
-.env
 .env.*
 .env.local
 .env.development.local
