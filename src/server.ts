@@ -13,9 +13,16 @@ const app: Application = express();
 const PORT = process.env.PORT || 8001;
 
 // Middleware
+// For widget endpoints, allow all origins since widgets can be embedded anywhere
 app.use(cors({
-  origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
-  credentials: true
+  origin: (origin, callback) => {
+    // Allow all origins for widget-specific endpoints
+    // In production, you might want to restrict this to specific domains
+    callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

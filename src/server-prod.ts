@@ -14,8 +14,29 @@ const PORT = process.env.PORT || 8001;
 
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
-  credentials: true
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or postman)
+    if (!origin) return callback(null, true);
+
+    // Parse allowed origins from environment variable
+    const allowedOrigins = process.env.CORS_ORIGINS?.split(',').map(o => o.trim()) || [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:5175'
+    ];
+
+    // Check if the origin is allowed
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      // For widget endpoints, allow all origins since widgets can be embedded anywhere
+      // You might want to restrict this based on specific paths
+      callback(null, true); // Allow all origins for now
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
