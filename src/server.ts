@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import locationRoutes from './routes/locationRoutes';
 import AppConfig from './models/AppConfig';
+import { optionalWixAuth } from './middleware/wixAuth';
 
 // Load environment variables from the backend folder
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -22,7 +23,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Wix-Comp-Id']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -31,11 +32,21 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Routes
-app.use('/api/locations', locationRoutes);
+// Apply optional Wix authentication to all API routes
+// This will verify the token if present, but allow requests without it in development
+app.use('/api/locations', optionalWixAuth, locationRoutes);
 
 // Widget configuration endpoints
-app.get('/api/widget-config', async (req, res) => {
+app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
+    // Log Wix instance data if available
+    if (req.wix) {
+      console.log('[Widget Config] Request from Wix instance:', req.wix.instanceId);
+      if (req.wix.compId) {
+        console.log('[Widget Config] Component ID:', req.wix.compId);
+      }
+    }
+
     let config = await AppConfig.findOne({ app_id: 'mapsy-default' });
 
     if (!config) {
@@ -59,8 +70,16 @@ app.get('/api/widget-config', async (req, res) => {
   }
 });
 
-app.put('/api/widget-config', async (req, res) => {
+app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
+    // Log Wix instance data if available
+    if (req.wix) {
+      console.log('[Widget Config Update] Request from Wix instance:', req.wix.instanceId);
+      if (req.wix.compId) {
+        console.log('[Widget Config Update] Component ID:', req.wix.compId);
+      }
+    }
+
     const config = await AppConfig.findOneAndUpdate(
       { app_id: 'mapsy-default' },
       {

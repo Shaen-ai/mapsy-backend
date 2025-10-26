@@ -8,6 +8,14 @@ export class LocationController {
   // Get all locations
   async getAll(req: Request, res: Response) {
     try {
+      // Log Wix instance data if available
+      if (req.wix) {
+        console.log('[Locations] Request from Wix instance:', req.wix.instanceId);
+        if (req.wix.compId) {
+          console.log('[Locations] Component ID:', req.wix.compId);
+        }
+      }
+
       const locations = await Location.find().sort({ createdAt: -1 });
       res.json(locations);
     } catch (error) {
