@@ -8,15 +8,25 @@ export class LocationController {
   // Get all locations
   async getAll(req: Request, res: Response) {
     try {
-      // Log Wix instance data if available
-      if (req.wix) {
+      // Build query filter
+      const filter: any = {};
+
+      // If request has Wix instance ID, filter by it
+      if (req.wix && req.wix.instanceId) {
+        filter.instanceId = req.wix.instanceId;
         console.log('[Locations] Request from Wix instance:', req.wix.instanceId);
         if (req.wix.compId) {
           console.log('[Locations] Component ID:', req.wix.compId);
         }
+      } else {
+        // No instance ID - dashboard access (show locations without instanceId for backward compatibility)
+        // Or could show all locations - depending on your needs
+        console.log('[Locations] Request without instance ID (dashboard access)');
+        filter.instanceId = { $exists: false }; // Only show locations not associated with any instance
       }
 
-      const locations = await Location.find().sort({ createdAt: -1 });
+      const locations = await Location.find(filter).sort({ createdAt: -1 });
+      console.log(`[Locations] Returning ${locations.length} locations for filter:`, filter);
       res.json(locations);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -31,6 +41,14 @@ export class LocationController {
 
       if (!location) {
         return res.status(404).json({ error: 'Location not found' });
+      }
+
+      // Check if location belongs to this instance (for Wix requests)
+      if (req.wix && req.wix.instanceId) {
+        if (location.instanceId && location.instanceId !== req.wix.instanceId) {
+          console.log('[Location Get] Access denied - location belongs to different instance');
+          return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
+        }
       }
 
       res.json(location);
@@ -57,6 +75,12 @@ export class LocationController {
         category: req.body.category || 'store',
         business_hours: req.body.business_hours
       };
+
+      // Associate location with Wix instance if available
+      if (req.wix && req.wix.instanceId) {
+        locationData.instanceId = req.wix.instanceId;
+        console.log('[Location Create] Associating with instance:', req.wix.instanceId);
+      }
 
       // Handle image upload
       if (req.file) {
@@ -97,6 +121,14 @@ export class LocationController {
 
       if (!location) {
         return res.status(404).json({ error: 'Location not found' });
+      }
+
+      // Check if location belongs to this instance
+      if (req.wix && req.wix.instanceId) {
+        if (location.instanceId && location.instanceId !== req.wix.instanceId) {
+          console.log('[Location Update] Access denied - location belongs to different instance');
+          return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
+        }
       }
 
       const updateData: Partial<ILocation> = {
@@ -151,6 +183,14 @@ export class LocationController {
 
       if (!location) {
         return res.status(404).json({ error: 'Location not found' });
+      }
+
+      // Check if location belongs to this instance
+      if (req.wix && req.wix.instanceId) {
+        if (location.instanceId && location.instanceId !== req.wix.instanceId) {
+          console.log('[Location Delete] Access denied - location belongs to different instance');
+          return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
+        }
       }
 
       // Delete image if exists

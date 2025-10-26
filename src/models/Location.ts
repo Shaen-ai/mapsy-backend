@@ -21,6 +21,7 @@ export interface ILocation extends Document {
   image_url?: string;
   latitude?: number;
   longitude?: number;
+  instanceId?: string;  // Wix instance ID - links location to specific Wix site
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,6 +75,11 @@ const LocationSchema = new Schema<ILocation>(
       type: Number,
       min: -180,
       max: 180
+    },
+    instanceId: {
+      type: String,
+      index: true,
+      sparse: true  // Allow null for backward compatibility with existing locations
     }
   },
   {
@@ -84,5 +90,8 @@ const LocationSchema = new Schema<ILocation>(
 
 // Index for geospatial queries (optional)
 LocationSchema.index({ latitude: 1, longitude: 1 });
+
+// Index for instance-based queries (for Wix multi-tenancy)
+LocationSchema.index({ instanceId: 1 });
 
 export default mongoose.model<ILocation>('Location', LocationSchema);
