@@ -2,6 +2,8 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IAppConfig extends Document {
   app_id: string;
+  instanceId?: string;
+  compId?: string;
   widget_config: {
     defaultView: 'map' | 'list';
     showHeader: boolean;
@@ -19,7 +21,18 @@ const AppConfigSchema = new Schema<IAppConfig>(
       type: String,
       required: true,
       unique: true,
-      default: 'mapsy-default'
+      default: 'mapsy-default',
+      index: true
+    },
+    instanceId: {
+      type: String,
+      index: true,
+      sparse: true
+    },
+    compId: {
+      type: String,
+      index: true,
+      sparse: true
     },
     widget_config: {
       defaultView: {

@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import locationRoutes from './routes/locationRoutes';
 import AppConfig from './models/AppConfig';
+import { optionalWixAuth } from './middleware/wixAuth';
 
 // Load environment variables from the backend folder
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -45,36 +46,48 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Routes
-app.use('/api/locations', locationRoutes);
+app.use('/api/locations', optionalWixAuth, locationRoutes);
 
 // Widget configuration endpoints
-app.get('/api/widget-config', async (req, res) => {
+app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
+    const defaultWidgetConfig = {
+      defaultView: 'map',
+      showHeader: true,
+      headerTitle: 'Our Locations',
+      mapZoomLevel: 12,
+      primaryColor: '#3B82F6'
+    };
+
+    const instanceId = req.wix?.instanceId;
+    const compId = req.wix?.compId;
+
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
       // Return default config if not connected
-      return res.json({
-        defaultView: 'map',
-        showHeader: true,
-        headerTitle: 'Our Locations',
-        mapZoomLevel: 12,
-        primaryColor: '#3B82F6'
-      });
+      return res.json(defaultWidgetConfig);
     }
 
-    let config = await AppConfig.findOne({ app_id: 'mapsy-default' });
+    const computeConfigKey = (instanceValue?: string, compValue?: string | null) => {
+      if (!instanceValue) {
+        return 'mapsy-default';
+      }
+      return `mapsy-${instanceValue}${compValue ? `-${compValue}` : ''}`;
+    };
+
+    const desiredKey = computeConfigKey(instanceId, compId ?? null);
+    const instanceFallbackKey = instanceId ? computeConfigKey(instanceId, null) : null;
+
+    let config =
+      (await AppConfig.findOne({ app_id: desiredKey })) ||
+      (instanceFallbackKey ? await AppConfig.findOne({ app_id: instanceFallbackKey }) : null) ||
+      (await AppConfig.findOne({ app_id: 'mapsy-default' }));
 
     if (!config) {
       // Create default config if it doesn't exist
       config = await AppConfig.create({
         app_id: 'mapsy-default',
-        widget_config: {
-          defaultView: 'map',
-          showHeader: true,
-          headerTitle: 'Our Locations',
-          mapZoomLevel: 12,
-          primaryColor: '#3B82F6'
-        }
+        widget_config: defaultWidgetConfig
       });
     }
 
@@ -92,23 +105,59 @@ app.get('/api/widget-config', async (req, res) => {
   }
 });
 
-app.put('/api/widget-config', async (req, res) => {
+app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
+    const defaultWidgetConfig = {
+      defaultView: 'map',
+      showHeader: true,
+      headerTitle: 'Our Locations',
+      mapZoomLevel: 12,
+      primaryColor: '#3B82F6'
+    };
+
+    const instanceId = req.wix?.instanceId;
+    const compId = req.wix?.compId;
+
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: 'Database not available' });
     }
 
-    const config = await AppConfig.findOneAndUpdate(
-      { app_id: 'mapsy-default' },
-      {
-        $set: {
-          'widget_config': {
-            ...req.body
-          }
+    const computeConfigKey = (instanceValue?: string, compValue?: string | null) => {
+      if (!instanceValue) {
+        return 'mapsy-default';
+      }
+      return `mapsy-${instanceValue}${compValue ? `-${compValue}` : ''}`;
+    };
+
+    const targetKey = computeConfigKey(instanceId, compId ?? null);
+
+    const updateDoc: Record<string, any> = {
+      $set: {
+        app_id: targetKey,
+        'widget_config': {
+          ...defaultWidgetConfig,
+          ...req.body
         }
       },
-      { new: true, upsert: true }
+    };
+
+    if (instanceId) {
+      updateDoc.$set.instanceId = instanceId;
+    } else {
+      updateDoc.$unset = { ...(updateDoc.$unset || {}), instanceId: '' };
+    }
+
+    if (compId) {
+      updateDoc.$set.compId = compId;
+    } else {
+      updateDoc.$unset = { ...(updateDoc.$unset || {}), compId: '' };
+    }
+
+    const config = await AppConfig.findOneAndUpdate(
+      { app_id: targetKey },
+      updateDoc,
+      { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
     res.json(config.widget_config);

@@ -15,8 +15,16 @@ export class LocationController {
       if (req.wix && req.wix.instanceId) {
         filter.instanceId = req.wix.instanceId;
         console.log('[Locations] Request from Wix instance:', req.wix.instanceId);
-        if (req.wix.compId) {
-          console.log('[Locations] Component ID:', req.wix.compId);
+        const compId = req.wix.compId;
+        if (compId) {
+          filter.compId = compId;
+          console.log('[Locations] Component ID filter:', compId);
+        } else {
+          filter.$or = [
+            { compId: { $exists: false } },
+            { compId: null },
+          ];
+          console.log('[Locations] No component ID provided. Falling back to non-component scoped data.');
         }
       } else {
         // No instance ID - dashboard access (show locations without instanceId for backward compatibility)
@@ -49,6 +57,16 @@ export class LocationController {
           console.log('[Location Get] Access denied - location belongs to different instance');
           return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
         }
+
+        if (req.wix.compId) {
+          if (location.compId && location.compId !== req.wix.compId) {
+            console.log('[Location Get] Access denied - location belongs to different component');
+            return res.status(403).json({ error: 'Access denied - location belongs to different component' });
+          }
+        } else if (location.compId) {
+          console.log('[Location Get] Access denied - request missing component scope');
+          return res.status(403).json({ error: 'Access denied - component ID required' });
+        }
       }
 
       res.json(location);
@@ -80,6 +98,12 @@ export class LocationController {
       if (req.wix && req.wix.instanceId) {
         locationData.instanceId = req.wix.instanceId;
         console.log('[Location Create] Associating with instance:', req.wix.instanceId);
+        if (req.wix.compId) {
+          locationData.compId = req.wix.compId;
+          console.log('[Location Create] Associating with component:', req.wix.compId);
+        } else {
+          console.warn('[Location Create] Wix request missing component ID - record will be scoped to instance only');
+        }
       }
 
       // Handle image upload
@@ -128,6 +152,16 @@ export class LocationController {
         if (location.instanceId && location.instanceId !== req.wix.instanceId) {
           console.log('[Location Update] Access denied - location belongs to different instance');
           return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
+        }
+
+        if (req.wix.compId) {
+          if (location.compId && location.compId !== req.wix.compId) {
+            console.log('[Location Update] Access denied - location belongs to different component');
+            return res.status(403).json({ error: 'Access denied - location belongs to different component' });
+          }
+        } else if (location.compId) {
+          console.log('[Location Update] Access denied - component scope required');
+          return res.status(403).json({ error: 'Access denied - component ID required' });
         }
       }
 
@@ -190,6 +224,16 @@ export class LocationController {
         if (location.instanceId && location.instanceId !== req.wix.instanceId) {
           console.log('[Location Delete] Access denied - location belongs to different instance');
           return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
+        }
+
+        if (req.wix.compId) {
+          if (location.compId && location.compId !== req.wix.compId) {
+            console.log('[Location Delete] Access denied - location belongs to different component');
+            return res.status(403).json({ error: 'Access denied - location belongs to different component' });
+          }
+        } else if (location.compId) {
+          console.log('[Location Delete] Access denied - component scope required');
+          return res.status(403).json({ error: 'Access denied - component ID required' });
         }
       }
 
