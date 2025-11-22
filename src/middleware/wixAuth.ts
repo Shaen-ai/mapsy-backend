@@ -7,6 +7,8 @@ declare global {
     interface Request {
       wix?: {
         instanceId: string;
+        appDefId?: string;
+        vendorProductId?: string | null;
         compId?: string;
         decodedToken: any;
       };
@@ -16,6 +18,8 @@ declare global {
 
 type WixInstancePayload = {
   instanceId?: string;
+  appDefId?: string;
+  vendorProductId?: string | null;
   compId?: string;
   [key: string]: any;
 };
@@ -23,6 +27,8 @@ type WixInstancePayload = {
 type DecodedInstance = {
   payload: WixInstancePayload;
   instanceId: string;
+  appDefId?: string;
+  vendorProductId?: string | null;
   signatureValid: boolean;
 };
 
@@ -108,9 +114,17 @@ const decodeWixInstanceToken = (token: string, secret?: string): DecodedInstance
     throw new Error('Wix instance payload missing instanceId');
   }
 
+  // Extract appDefId (application definition ID)
+  const appDefId = payload.appDefId;
+
+  // Extract vendorProductId (premium plan ID) - can be null if no premium plan
+  const vendorProductId = payload.vendorProductId || null;
+
   return {
     payload,
     instanceId,
+    appDefId,
+    vendorProductId,
     signatureValid: secret ? signatureValid : false,
   };
 };
@@ -178,6 +192,8 @@ export const verifyWixInstance = (req: Request, res: Response, next: NextFunctio
 
     console.log('[WixAuth] Token verified successfully');
     console.log('[WixAuth] Instance ID:', instanceId);
+    console.log('[WixAuth] App Def ID:', decoded.appDefId || 'N/A');
+    console.log('[WixAuth] Vendor Product ID (Plan):', decoded.vendorProductId || 'N/A');
     if (compId) {
       console.log('[WixAuth] Component ID:', compId);
     }
@@ -185,6 +201,8 @@ export const verifyWixInstance = (req: Request, res: Response, next: NextFunctio
     // Attach Wix data to request object for use in controllers
     req.wix = {
       instanceId,
+      appDefId: decoded.appDefId,
+      vendorProductId: decoded.vendorProductId,
       compId,
       decodedToken: decoded.payload,
     };
@@ -224,11 +242,15 @@ export const optionalWixAuth = (req: Request, res: Response, next: NextFunction)
 
     req.wix = {
       instanceId: decoded.instanceId,
+      appDefId: decoded.appDefId,
+      vendorProductId: decoded.vendorProductId,
       compId,
       decodedToken: decoded.payload,
     };
 
     console.log('[WixAuth] Optional auth - token verified for instance:', decoded.instanceId);
+    console.log('[WixAuth] Optional auth - appDefId:', decoded.appDefId || 'N/A');
+    console.log('[WixAuth] Optional auth - vendorProductId:', decoded.vendorProductId || 'N/A');
   } catch (err) {
     // Token invalid, but that's okay for optional auth
     console.log('[WixAuth] Optional auth - invalid token, continuing without Wix data');
