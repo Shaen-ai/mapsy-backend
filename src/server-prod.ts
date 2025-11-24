@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import locationRoutes from './routes/locationRoutes';
 import AppConfig from './models/AppConfig';
-import { optionalWixAuth } from './middleware/wixAuth';
+import { optionalWixAuth } from './middleware/wixSdkAuth';
 
 // Load environment variables from the backend folder
 dotenv.config({ path: path.join(__dirname, '../.env') });
