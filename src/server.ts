@@ -184,7 +184,7 @@ app.get('/api/widgets', optionalWixAuth, async (req, res) => {
     // Find all widget configs for this instance (those with compId set)
     const widgets = await AppConfig.find({
       instanceId: instanceId,
-      compId: { $exists: true, $ne: null, $ne: '' }
+      compId: { $exists: true, $nin: [null, ''] }
     }).select('compId widgetName widget_config createdAt updatedAt');
 
     console.log('[Widgets] Found', widgets.length, 'widgets for instance');
