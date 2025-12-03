@@ -4,6 +4,105 @@ import geocodingService from '../services/geocodingService';
 import storageService from '../services/storageService';
 import { validationResult } from 'express-validator';
 
+// Default locations shown when no compId is provided (first-time widget load)
+const DEFAULT_LOCATIONS = [
+  {
+    _id: 'default-1',
+    name: 'Disneyland',
+    address: '1313 Disneyland Dr, Anaheim, CA 92802, USA',
+    category: 'other' as const,
+    latitude: 33.8121,
+    longitude: -117.9190,
+    phone: '+1 714-781-4636',
+    website: 'https://disneyland.disney.go.com',
+    business_hours: {
+      mon: '8:00 AM - 12:00 AM',
+      tue: '8:00 AM - 12:00 AM',
+      wed: '8:00 AM - 12:00 AM',
+      thu: '8:00 AM - 12:00 AM',
+      fri: '8:00 AM - 12:00 AM',
+      sat: '8:00 AM - 12:00 AM',
+      sun: '8:00 AM - 12:00 AM'
+    }
+  },
+  {
+    _id: 'default-2',
+    name: 'Eiffel Tower',
+    address: 'Champ de Mars, 5 Avenue Anatole France, 75007 Paris, France',
+    category: 'other' as const,
+    latitude: 48.8584,
+    longitude: 2.2945,
+    phone: '+33 892 70 12 39',
+    website: 'https://www.toureiffel.paris',
+    business_hours: {
+      mon: '9:30 AM - 11:45 PM',
+      tue: '9:30 AM - 11:45 PM',
+      wed: '9:30 AM - 11:45 PM',
+      thu: '9:30 AM - 11:45 PM',
+      fri: '9:30 AM - 11:45 PM',
+      sat: '9:30 AM - 11:45 PM',
+      sun: '9:30 AM - 11:45 PM'
+    }
+  },
+  {
+    _id: 'default-3',
+    name: 'Santiago Bernabéu Stadium',
+    address: 'Av. de Concha Espina, 1, 28036 Madrid, Spain',
+    category: 'other' as const,
+    latitude: 40.4531,
+    longitude: -3.6883,
+    phone: '+34 913 98 43 00',
+    website: 'https://www.realmadrid.com/estadio-santiago-bernabeu',
+    business_hours: {
+      mon: '10:00 AM - 7:00 PM',
+      tue: '10:00 AM - 7:00 PM',
+      wed: '10:00 AM - 7:00 PM',
+      thu: '10:00 AM - 7:00 PM',
+      fri: '10:00 AM - 7:00 PM',
+      sat: '10:00 AM - 7:00 PM',
+      sun: '10:00 AM - 7:00 PM'
+    }
+  },
+  {
+    _id: 'default-4',
+    name: 'Statue of Liberty',
+    address: 'Liberty Island, New York, NY 10004, USA',
+    category: 'other' as const,
+    latitude: 40.6892,
+    longitude: -74.0445,
+    phone: '+1 212-363-3200',
+    website: 'https://www.nps.gov/stli',
+    business_hours: {
+      mon: '9:00 AM - 5:00 PM',
+      tue: '9:00 AM - 5:00 PM',
+      wed: '9:00 AM - 5:00 PM',
+      thu: '9:00 AM - 5:00 PM',
+      fri: '9:00 AM - 5:00 PM',
+      sat: '9:00 AM - 5:00 PM',
+      sun: '9:00 AM - 5:00 PM'
+    }
+  },
+  {
+    _id: 'default-5',
+    name: 'Jerusalem Old City',
+    address: 'Old City, Jerusalem, Israel',
+    category: 'other' as const,
+    latitude: 31.7767,
+    longitude: 35.2345,
+    phone: '',
+    website: 'https://www.jerusalem.com',
+    business_hours: {
+      mon: 'Open 24 hours',
+      tue: 'Open 24 hours',
+      wed: 'Open 24 hours',
+      thu: 'Open 24 hours',
+      fri: 'Open 24 hours',
+      sat: 'Open 24 hours',
+      sun: 'Open 24 hours'
+    }
+  }
+];
+
 export class LocationController {
   // Get all locations
   async getAll(req: Request, res: Response) {
@@ -20,15 +119,12 @@ export class LocationController {
           filter.compId = compId;
           console.log('[Locations] Component ID filter:', compId);
         } else {
-          filter.$or = [
-            { compId: { $exists: false } },
-            { compId: null },
-          ];
-          console.log('[Locations] No component ID provided. Falling back to non-component scoped data.');
+          // No compId provided - return default locations for preview/first-time load
+          console.log('[Locations] No component ID provided. Returning default locations for preview.');
+          return res.json(DEFAULT_LOCATIONS);
         }
       } else {
         // No instance ID - dashboard access (show locations without instanceId for backward compatibility)
-        // Or could show all locations - depending on your needs
         console.log('[Locations] Request without instance ID (dashboard access)');
         filter.instanceId = { $exists: false }; // Only show locations not associated with any instance
       }

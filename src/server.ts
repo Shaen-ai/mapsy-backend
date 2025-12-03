@@ -81,7 +81,11 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
       });
     }
 
-    res.json(config.widget_config);
+    // Include widgetName in the response
+    res.json({
+      ...config.widget_config,
+      widgetName: config.widgetName || ''
+    });
   } catch (error) {
     console.error('Error fetching widget config:', error);
     res.status(500).json({ error: 'Failed to fetch widget configuration' });
@@ -95,7 +99,8 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       showHeader: true,
       headerTitle: 'Our Locations',
       mapZoomLevel: 12,
-      primaryColor: '#3B82F6'
+      primaryColor: '#3B82F6',
+      showWidgetName: false
     };
 
     const instanceId = req.wix?.instanceId;
@@ -118,12 +123,15 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
 
     const targetKey = computeConfigKey(instanceId, compId ?? null);
 
+    // Extract widgetName from body if present (it's stored at root level, not in widget_config)
+    const { widgetName, ...widgetConfigFields } = req.body;
+
     const updateDoc: Record<string, any> = {
       $set: {
         app_id: targetKey,
         'widget_config': {
           ...defaultWidgetConfig,
-          ...req.body
+          ...widgetConfigFields
         }
       }
     };
@@ -140,16 +148,60 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       updateDoc.$unset = { ...(updateDoc.$unset || {}), compId: '' };
     }
 
+    // Store widgetName at root level
+    if (widgetName !== undefined) {
+      updateDoc.$set.widgetName = widgetName;
+    }
+
     const config = await AppConfig.findOneAndUpdate(
       { app_id: targetKey },
       updateDoc,
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    res.json(config.widget_config);
+    // Include widgetName in the response
+    res.json({
+      ...config.widget_config,
+      widgetName: config.widgetName || ''
+    });
   } catch (error) {
     console.error('Error updating widget config:', error);
     res.status(500).json({ error: 'Failed to update widget configuration' });
+  }
+});
+
+// Get all widgets for an instance (used by dashboard when no compId is specified)
+app.get('/api/widgets', optionalWixAuth, async (req, res) => {
+  try {
+    const instanceId = req.wix?.instanceId;
+
+    if (!instanceId) {
+      return res.status(400).json({ error: 'Instance ID is required' });
+    }
+
+    console.log('[Widgets] Fetching all widgets for instance:', instanceId);
+
+    // Find all widget configs for this instance (those with compId set)
+    const widgets = await AppConfig.find({
+      instanceId: instanceId,
+      compId: { $exists: true, $ne: null, $ne: '' }
+    }).select('compId widgetName widget_config createdAt updatedAt');
+
+    console.log('[Widgets] Found', widgets.length, 'widgets for instance');
+
+    // Transform to a cleaner response format
+    const widgetList = widgets.map(w => ({
+      compId: w.compId,
+      widgetName: w.widgetName || '',
+      defaultView: w.widget_config?.defaultView || 'map',
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt
+    }));
+
+    res.json(widgetList);
+  } catch (error) {
+    console.error('Error fetching widgets:', error);
+    res.status(500).json({ error: 'Failed to fetch widgets' });
   }
 });
 

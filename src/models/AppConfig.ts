@@ -4,12 +4,14 @@ export interface IAppConfig extends Document {
   app_id: string;
   instanceId?: string;
   compId?: string;
+  widgetName?: string;
   widget_config: {
     defaultView: 'map' | 'list';
     showHeader: boolean;
     headerTitle: string;
     mapZoomLevel: number;
     primaryColor: string;
+    showWidgetName: boolean;
   };
   createdAt: Date;
   updatedAt: Date;
@@ -34,6 +36,10 @@ const AppConfigSchema = new Schema<IAppConfig>(
       index: true,
       sparse: true
     },
+    widgetName: {
+      type: String,
+      default: ''
+    },
     widget_config: {
       defaultView: {
         type: String,
@@ -57,6 +63,10 @@ const AppConfigSchema = new Schema<IAppConfig>(
       primaryColor: {
         type: String,
         default: '#3B82F6'
+      },
+      showWidgetName: {
+        type: Boolean,
+        default: false
       }
     }
   },
