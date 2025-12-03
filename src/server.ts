@@ -233,6 +233,29 @@ app.get('/api/auth-info', optionalWixAuth, async (req, res) => {
   }
 });
 
+// Premium status check - used by widget to determine if it should show on published site
+app.get('/api/premium-status', optionalWixAuth, async (req, res) => {
+  try {
+    const vendorProductId = req.wix?.vendorProductId || null;
+    const instanceId = req.wix?.instanceId || null;
+
+    console.log('[Premium Status] Instance ID:', instanceId);
+    console.log('[Premium Status] Vendor Product ID:', vendorProductId);
+
+    // User has premium if vendorProductId is set
+    const hasPremium = !!vendorProductId;
+
+    res.json({
+      hasPremium,
+      vendorProductId,
+      instanceId
+    });
+  } catch (error) {
+    console.error('Error checking premium status:', error);
+    res.status(500).json({ error: 'Failed to check premium status' });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Mapsy API is running' });
