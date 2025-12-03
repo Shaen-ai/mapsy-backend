@@ -213,11 +213,9 @@ app.get('/api/auth-info', optionalWixAuth, async (req, res) => {
     const compId = req.wix?.compId || req.headers['x-wix-comp-id'] as string || null;
     const instanceId = req.wix?.instanceId || null;
 
-    // Extract the token from Authorization header (Bearer token)
-    let instanceToken: string | null = null;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      instanceToken = authHeader.substring(7); // Remove 'Bearer ' prefix
-    }
+    // Return the full authorization header value as instanceToken
+    // This preserves the format (OauthNG.JWS. or Bearer) so dashboard can use it
+    const instanceToken = authHeader || null;
 
     console.log('[Auth Info] Instance ID:', instanceId);
     console.log('[Auth Info] Comp ID:', compId);
