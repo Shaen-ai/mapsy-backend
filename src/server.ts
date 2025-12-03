@@ -205,6 +205,36 @@ app.get('/api/widgets', optionalWixAuth, async (req, res) => {
   }
 });
 
+// Get auth info - returns the instance token from the request headers
+// This is used by the settings panel to get the instance token for dashboard URL
+app.get('/api/auth-info', optionalWixAuth, async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const compId = req.wix?.compId || req.headers['x-wix-comp-id'] as string || null;
+    const instanceId = req.wix?.instanceId || null;
+
+    // Extract the token from Authorization header (Bearer token)
+    let instanceToken: string | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      instanceToken = authHeader.substring(7); // Remove 'Bearer ' prefix
+    }
+
+    console.log('[Auth Info] Instance ID:', instanceId);
+    console.log('[Auth Info] Comp ID:', compId);
+    console.log('[Auth Info] Has token:', !!instanceToken);
+
+    res.json({
+      instanceId,
+      compId,
+      instanceToken,
+      isAuthenticated: !!instanceToken
+    });
+  } catch (error) {
+    console.error('Error getting auth info:', error);
+    res.status(500).json({ error: 'Failed to get auth info' });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Mapsy API is running' });
