@@ -81,10 +81,15 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
       });
     }
 
-    // Include widgetName in the response
+    // Check premium status from vendorProductId
+    const vendorProductId = req.wix?.vendorProductId || null;
+    const hasPremium = !!vendorProductId;
+
+    // Include widgetName and hasPremium in the response
     res.json({
       ...config.widget_config,
-      widgetName: config.widgetName || ''
+      widgetName: config.widgetName || '',
+      hasPremium
     });
   } catch (error) {
     console.error('Error fetching widget config:', error);
