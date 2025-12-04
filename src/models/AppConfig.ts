@@ -5,6 +5,7 @@ export interface IAppConfig extends Document {
   instanceId?: string;
   compId?: string;
   widgetName?: string;
+  hasPremium?: boolean;
   widget_config: {
     defaultView: 'map' | 'list';
     showHeader: boolean;
@@ -39,6 +40,10 @@ const AppConfigSchema = new Schema<IAppConfig>(
     widgetName: {
       type: String,
       default: ''
+    },
+    hasPremium: {
+      type: Boolean,
+      default: undefined
     },
     widget_config: {
       defaultView: {

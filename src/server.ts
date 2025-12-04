@@ -81,9 +81,18 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
       });
     }
 
-    // Check premium status from vendorProductId
-    const vendorProductId = req.wix?.vendorProductId || null;
-    const hasPremium = !!vendorProductId;
+    // Check premium status - first check if stored in DB, then fall back to decoded instance
+    let hasPremium: boolean;
+    if (config.hasPremium !== undefined) {
+      // Use the value from the database if it exists
+      hasPremium = config.hasPremium;
+      console.log('[Widget Config] Using hasPremium from DB:', hasPremium);
+    } else {
+      // Fall back to checking vendorProductId from decoded instance
+      const vendorProductId = req.wix?.vendorProductId || null;
+      hasPremium = !!vendorProductId;
+      console.log('[Widget Config] Using hasPremium from instance:', hasPremium, '(vendorProductId:', vendorProductId, ')');
+    }
 
     // Include widgetName and hasPremium in the response
     res.json({
