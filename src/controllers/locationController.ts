@@ -107,31 +107,24 @@ export class LocationController {
   // Get all locations
   async getAll(req: Request, res: Response) {
     try {
-      // Build query filter
       const filter: any = {};
 
-      // If request has Wix instance ID, filter by it
       if (req.wix && req.wix.instanceId) {
         filter.instanceId = req.wix.instanceId;
-        console.log('[Locations] Request from Wix instance:', req.wix.instanceId);
         const compId = req.wix.compId;
         if (compId) {
           filter.compId = compId;
-          console.log('[Locations] Component ID filter:', compId);
         } else {
           // No compId provided - return default locations for preview/first-time load
-          console.log('[Locations] No component ID provided. Returning default locations for preview.');
           return res.json(DEFAULT_LOCATIONS);
         }
       } else {
-        // No instance ID - dashboard access (show locations without instanceId for backward compatibility)
-        console.log('[Locations] Request without instance ID (dashboard access)');
-        filter.instanceId = { $exists: false }; // Only show locations not associated with any instance
+        // No instance ID - dashboard access
+        filter.instanceId = { $exists: false };
       }
 
-      const locations = await Location.find(filter).sort({ createdAt: -1 });
-      console.log(`[Locations] Returning ${locations.length} locations for filter:`, filter);
-      res.json(locations);
+      const locations = await Location.find(filter).sort({ createdAt: -1 }).lean();
+      return res.json(locations);
     } catch (error) {
       console.error('Error fetching locations:', error);
       res.status(500).json({ error: 'Failed to fetch locations' });
@@ -141,26 +134,22 @@ export class LocationController {
   // Get single location
   async getOne(req: Request, res: Response) {
     try {
-      const location = await Location.findById(req.params.id);
+      const location = await Location.findById(req.params.id).lean();
 
       if (!location) {
         return res.status(404).json({ error: 'Location not found' });
       }
 
-      // Check if location belongs to this instance (for Wix requests)
       if (req.wix && req.wix.instanceId) {
         if (location.instanceId && location.instanceId !== req.wix.instanceId) {
-          console.log('[Location Get] Access denied - location belongs to different instance');
           return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
         }
 
         if (req.wix.compId) {
           if (location.compId && location.compId !== req.wix.compId) {
-            console.log('[Location Get] Access denied - location belongs to different component');
             return res.status(403).json({ error: 'Access denied - location belongs to different component' });
           }
         } else if (location.compId) {
-          console.log('[Location Get] Access denied - request missing component scope');
           return res.status(403).json({ error: 'Access denied - component ID required' });
         }
       }
@@ -190,19 +179,13 @@ export class LocationController {
         business_hours: req.body.business_hours
       };
 
-      // Associate location with Wix instance if available
       if (req.wix && req.wix.instanceId) {
         locationData.instanceId = req.wix.instanceId;
-        console.log('[Location Create] Associating with instance:', req.wix.instanceId);
         if (req.wix.compId) {
           locationData.compId = req.wix.compId;
-          console.log('[Location Create] Associating with component:', req.wix.compId);
-        } else {
-          console.warn('[Location Create] Wix request missing component ID - record will be scoped to instance only');
         }
       }
 
-      // Handle image upload
       if (req.file) {
         const imageUrl = await storageService.uploadImage(req.file);
         if (imageUrl) {
@@ -210,7 +193,6 @@ export class LocationController {
         }
       }
 
-      // Geocode the address
       if (locationData.address) {
         const coordinates = await geocodingService.geocodeAddress(locationData.address);
         if (coordinates) {
@@ -243,20 +225,16 @@ export class LocationController {
         return res.status(404).json({ error: 'Location not found' });
       }
 
-      // Check if location belongs to this instance
       if (req.wix && req.wix.instanceId) {
         if (location.instanceId && location.instanceId !== req.wix.instanceId) {
-          console.log('[Location Update] Access denied - location belongs to different instance');
           return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
         }
 
         if (req.wix.compId) {
           if (location.compId && location.compId !== req.wix.compId) {
-            console.log('[Location Update] Access denied - location belongs to different component');
             return res.status(403).json({ error: 'Access denied - location belongs to different component' });
           }
         } else if (location.compId) {
-          console.log('[Location Update] Access denied - component scope required');
           return res.status(403).json({ error: 'Access denied - component ID required' });
         }
       }
@@ -271,9 +249,7 @@ export class LocationController {
         business_hours: req.body.business_hours || location.business_hours
       };
 
-      // Handle image upload
       if (req.file) {
-        // Delete old image if exists
         if (location.image_url) {
           await storageService.deleteImage(location.image_url);
         }
@@ -284,7 +260,6 @@ export class LocationController {
         }
       }
 
-      // Re-geocode if address changed or if coordinates are missing
       if (updateData.address && (updateData.address !== location.address || !location.latitude || !location.longitude)) {
         const coordinates = await geocodingService.geocodeAddress(updateData.address);
         if (coordinates) {
@@ -315,25 +290,20 @@ export class LocationController {
         return res.status(404).json({ error: 'Location not found' });
       }
 
-      // Check if location belongs to this instance
       if (req.wix && req.wix.instanceId) {
         if (location.instanceId && location.instanceId !== req.wix.instanceId) {
-          console.log('[Location Delete] Access denied - location belongs to different instance');
           return res.status(403).json({ error: 'Access denied - location belongs to different instance' });
         }
 
         if (req.wix.compId) {
           if (location.compId && location.compId !== req.wix.compId) {
-            console.log('[Location Delete] Access denied - location belongs to different component');
             return res.status(403).json({ error: 'Access denied - location belongs to different component' });
           }
         } else if (location.compId) {
-          console.log('[Location Delete] Access denied - component scope required');
           return res.status(403).json({ error: 'Access denied - component ID required' });
         }
       }
 
-      // Delete image if exists
       if (location.image_url) {
         await storageService.deleteImage(location.image_url);
       }

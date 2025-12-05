@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import locationRoutes from './routes/locationRoutes';
 import AppConfig from './models/AppConfig';
+import Location from './models/Location';
 import { optionalWixAuth } from './middleware/wixSdkAuth';
 
 // Load environment variables from the backend folder
@@ -36,68 +37,155 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // This will verify the token if present, but allow requests without it in development
 app.use('/api/locations', optionalWixAuth, locationRoutes);
 
-// Widget configuration endpoints
-app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
-  try {
-    const defaultWidgetConfig = {
-      defaultView: 'map',
-      showHeader: true,
-      headerTitle: 'Our Locations',
-      mapZoomLevel: 12,
-      primaryColor: '#3B82F6'
-    };
+// Default locations shown when no compId is provided (first-time widget load)
+const DEFAULT_LOCATIONS = [
+  {
+    _id: 'default-1',
+    name: 'Disneyland',
+    address: '1313 Disneyland Dr, Anaheim, CA 92802, USA',
+    category: 'other',
+    latitude: 33.8121,
+    longitude: -117.9190,
+    phone: '+1 714-781-4636',
+    website: 'https://disneyland.disney.go.com'
+  },
+  {
+    _id: 'default-2',
+    name: 'Eiffel Tower',
+    address: 'Champ de Mars, 5 Avenue Anatole France, 75007 Paris, France',
+    category: 'other',
+    latitude: 48.8584,
+    longitude: 2.2945,
+    phone: '+33 892 70 12 39',
+    website: 'https://www.toureiffel.paris'
+  },
+  {
+    _id: 'default-3',
+    name: 'Santiago Bernabéu Stadium',
+    address: 'Av. de Concha Espina, 1, 28036 Madrid, Spain',
+    category: 'other',
+    latitude: 40.4531,
+    longitude: -3.6883,
+    phone: '+34 913 98 43 00',
+    website: 'https://www.realmadrid.com/estadio-santiago-bernabeu'
+  }
+];
 
+const defaultWidgetConfig = {
+  defaultView: 'map',
+  showHeader: true,
+  headerTitle: 'Our Locations',
+  mapZoomLevel: 12,
+  primaryColor: '#3B82F6'
+};
+
+const computeConfigKey = (instanceValue?: string, compValue?: string | null) => {
+  if (!instanceValue) {
+    return 'mapsy-default';
+  }
+  return `mapsy-${instanceValue}${compValue ? `-${compValue}` : ''}`;
+};
+
+// Combined endpoint - fetches both config and locations in a single request
+app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
+  try {
     const instanceId = req.wix?.instanceId;
     const compId = req.wix?.compId;
-
-    // Log Wix instance data if available
-    if (req.wix) {
-      console.log('[Widget Config] Request from Wix instance:', req.wix.instanceId);
-      if (req.wix.compId) {
-        console.log('[Widget Config] Component ID:', req.wix.compId);
-      }
-    }
-
-    const computeConfigKey = (instanceValue?: string, compValue?: string | null) => {
-      if (!instanceValue) {
-        return 'mapsy-default';
-      }
-      return `mapsy-${instanceValue}${compValue ? `-${compValue}` : ''}`;
-    };
 
     const desiredKey = computeConfigKey(instanceId, compId ?? null);
     const instanceFallbackKey = instanceId ? computeConfigKey(instanceId, null) : null;
 
-    let config =
-      (await AppConfig.findOne({ app_id: desiredKey })) ||
-      (instanceFallbackKey ? await AppConfig.findOne({ app_id: instanceFallbackKey }) : null) ||
-      (await AppConfig.findOne({ app_id: 'mapsy-default' }));
+    // Build keys to query for config
+    const keysToQuery = [desiredKey];
+    if (instanceFallbackKey && instanceFallbackKey !== desiredKey) {
+      keysToQuery.push(instanceFallbackKey);
+    }
+    keysToQuery.push('mapsy-default');
+
+    // Run config and locations queries in parallel
+    const [configs, locations] = await Promise.all([
+      AppConfig.find({ app_id: { $in: keysToQuery } }).lean(),
+      instanceId && compId
+        ? Location.find({ instanceId, compId }).sort({ createdAt: -1 }).lean()
+        : Promise.resolve(null)
+    ]);
+
+    // Find the best matching config
+    let config: typeof configs[0] | null = configs.find(c => c.app_id === desiredKey)
+      || configs.find(c => c.app_id === instanceFallbackKey)
+      || configs.find(c => c.app_id === 'mapsy-default')
+      || null;
 
     if (!config) {
-      // Create default config if it doesn't exist
-      config = await AppConfig.create({
+      const newConfig = await AppConfig.create({
         app_id: 'mapsy-default',
         widget_config: defaultWidgetConfig
       });
+      config = newConfig.toObject() as typeof configs[0];
     }
 
-    // Check premium status - first check if stored in DB, then fall back to decoded instance
+    // Check premium status
     let hasPremium: boolean;
-    if (config.hasPremium !== undefined) {
-      // Use the value from the database if it exists
-      hasPremium = config.hasPremium;
-      console.log('[Widget Config] Using hasPremium from DB:', hasPremium);
+    if (config!.hasPremium !== undefined) {
+      hasPremium = config!.hasPremium;
     } else {
-      // Fall back to checking vendorProductId from decoded instance
-      const vendorProductId = req.wix?.vendorProductId || null;
-      hasPremium = !!vendorProductId;
-      console.log('[Widget Config] Using hasPremium from instance:', hasPremium, '(vendorProductId:', vendorProductId, ')');
+      hasPremium = !!req.wix?.vendorProductId;
     }
 
-    // Include widgetName and hasPremium in the response
     res.json({
-      ...config.widget_config,
-      widgetName: config.widgetName || '',
+      config: {
+        ...config!.widget_config,
+        widgetName: config!.widgetName || '',
+        hasPremium
+      },
+      locations: locations ?? DEFAULT_LOCATIONS
+    });
+  } catch (error) {
+    console.error('Error fetching widget data:', error);
+    res.status(500).json({ error: 'Failed to fetch widget data' });
+  }
+});
+
+// Widget configuration endpoints (kept for backward compatibility)
+app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
+  try {
+    const instanceId = req.wix?.instanceId;
+    const compId = req.wix?.compId;
+
+    const desiredKey = computeConfigKey(instanceId, compId ?? null);
+    const instanceFallbackKey = instanceId ? computeConfigKey(instanceId, null) : null;
+
+    const keysToQuery = [desiredKey];
+    if (instanceFallbackKey && instanceFallbackKey !== desiredKey) {
+      keysToQuery.push(instanceFallbackKey);
+    }
+    keysToQuery.push('mapsy-default');
+
+    const configs = await AppConfig.find({ app_id: { $in: keysToQuery } }).lean();
+
+    let config: typeof configs[0] | null = configs.find(c => c.app_id === desiredKey)
+      || configs.find(c => c.app_id === instanceFallbackKey)
+      || configs.find(c => c.app_id === 'mapsy-default')
+      || null;
+
+    if (!config) {
+      const newConfig = await AppConfig.create({
+        app_id: 'mapsy-default',
+        widget_config: defaultWidgetConfig
+      });
+      config = newConfig.toObject() as typeof configs[0];
+    }
+
+    let hasPremium: boolean;
+    if (config!.hasPremium !== undefined) {
+      hasPremium = config!.hasPremium;
+    } else {
+      hasPremium = !!req.wix?.vendorProductId;
+    }
+
+    res.json({
+      ...config!.widget_config,
+      widgetName: config!.widgetName || '',
       hasPremium
     });
   } catch (error) {
@@ -108,36 +196,10 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
 
 app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
-    const defaultWidgetConfig = {
-      defaultView: 'map',
-      showHeader: true,
-      headerTitle: 'Our Locations',
-      mapZoomLevel: 12,
-      primaryColor: '#3B82F6',
-      showWidgetName: false
-    };
-
     const instanceId = req.wix?.instanceId;
     const compId = req.wix?.compId;
-
-    // Log Wix instance data if available
-    if (req.wix) {
-      console.log('[Widget Config Update] Request from Wix instance:', req.wix.instanceId);
-      if (req.wix.compId) {
-        console.log('[Widget Config Update] Component ID:', req.wix.compId);
-      }
-    }
-
-    const computeConfigKey = (instanceValue?: string, compValue?: string | null) => {
-      if (!instanceValue) {
-        return 'mapsy-default';
-      }
-      return `mapsy-${instanceValue}${compValue ? `-${compValue}` : ''}`;
-    };
-
     const targetKey = computeConfigKey(instanceId, compId ?? null);
 
-    // Extract widgetName from body if present (it's stored at root level, not in widget_config)
     const { widgetName, ...widgetConfigFields } = req.body;
 
     const updateDoc: Record<string, any> = {
@@ -145,6 +207,7 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
         app_id: targetKey,
         'widget_config': {
           ...defaultWidgetConfig,
+          showWidgetName: false,
           ...widgetConfigFields
         }
       }
@@ -162,7 +225,6 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       updateDoc.$unset = { ...(updateDoc.$unset || {}), compId: '' };
     }
 
-    // Store widgetName at root level
     if (widgetName !== undefined) {
       updateDoc.$set.widgetName = widgetName;
     }
@@ -173,7 +235,6 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    // Include widgetName in the response
     res.json({
       ...config.widget_config,
       widgetName: config.widgetName || ''
@@ -193,17 +254,11 @@ app.get('/api/widgets', optionalWixAuth, async (req, res) => {
       return res.status(400).json({ error: 'Instance ID is required' });
     }
 
-    console.log('[Widgets] Fetching all widgets for instance:', instanceId);
-
-    // Find all widget configs for this instance (those with compId set)
     const widgets = await AppConfig.find({
       instanceId: instanceId,
       compId: { $exists: true, $nin: [null, ''] }
-    }).select('compId widgetName widget_config createdAt updatedAt');
+    }).select('compId widgetName widget_config createdAt updatedAt').lean();
 
-    console.log('[Widgets] Found', widgets.length, 'widgets for instance');
-
-    // Transform to a cleaner response format
     const widgetList = widgets.map(w => ({
       compId: w.compId,
       widgetName: w.widgetName || '',
@@ -220,20 +275,12 @@ app.get('/api/widgets', optionalWixAuth, async (req, res) => {
 });
 
 // Get auth info - returns the instance token from the request headers
-// This is used by the settings panel to get the instance token for dashboard URL
 app.get('/api/auth-info', optionalWixAuth, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     const compId = req.wix?.compId || req.headers['x-wix-comp-id'] as string || null;
     const instanceId = req.wix?.instanceId || null;
-
-    // Return the full authorization header value as instanceToken
-    // This preserves the format (OauthNG.JWS. or Bearer) so dashboard can use it
     const instanceToken = authHeader || null;
-
-    console.log('[Auth Info] Instance ID:', instanceId);
-    console.log('[Auth Info] Comp ID:', compId);
-    console.log('[Auth Info] Has token:', !!instanceToken);
 
     res.json({
       instanceId,
@@ -252,11 +299,6 @@ app.get('/api/premium-status', optionalWixAuth, async (req, res) => {
   try {
     const vendorProductId = req.wix?.vendorProductId || null;
     const instanceId = req.wix?.instanceId || null;
-
-    console.log('[Premium Status] Instance ID:', instanceId);
-    console.log('[Premium Status] Vendor Product ID:', vendorProductId);
-
-    // User has premium if vendorProductId is set
     const hasPremium = !!vendorProductId;
 
     res.json({

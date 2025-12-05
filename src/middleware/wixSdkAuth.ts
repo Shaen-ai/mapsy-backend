@@ -2,6 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import { createClient, AppStrategy } from '@wix/sdk';
 import { appInstances } from '@wix/app-management';
 import axios from 'axios';
+import NodeCache from 'node-cache';
+
+// Cache for verified tokens - TTL of 5 minutes (tokens are valid longer, but we want fresh data periodically)
+const tokenCache = new NodeCache({ stdTTL: 300, checkperiod: 60 });
 
 // Extend Express Request to include Wix data
 declare global {
@@ -46,10 +50,27 @@ const extractCompId = (req: Request): string | undefined => {
   return undefined;
 };
 
+// Type for cached token data
+interface CachedWixData {
+  instanceId: string;
+  appDefId?: string;
+  vendorProductId?: string | null;
+  instanceData: any;
+}
+
 /**
  * Verify access token and get instance data using Wix SDK
+ * Results are cached for 5 minutes to avoid repeated external API calls
  */
-const verifyAccessToken = async (accessToken: string, appId: string, appSecret: string) => {
+const verifyAccessToken = async (accessToken: string, appId: string, appSecret: string): Promise<CachedWixData> => {
+  // Check cache first - use token hash as key for security
+  const cacheKey = `wix_token_${accessToken.slice(-20)}`; // Use last 20 chars as key
+  const cached = tokenCache.get<CachedWixData>(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   try {
     // Step 1: Verify token and get instanceId using Wix token-info endpoint
     const tokenInfoResponse = await axios.post(
@@ -62,8 +83,6 @@ const verifyAccessToken = async (accessToken: string, appId: string, appSecret: 
     if (!instanceId) {
       throw new Error('No instanceId found in token response');
     }
-
-    console.log('[WixSDK] Token verified, Instance ID:', instanceId);
 
     // Step 2: Create elevated client to get full app instance data
     const elevatedClient = createClient({
@@ -81,14 +100,17 @@ const verifyAccessToken = async (accessToken: string, appId: string, appSecret: 
     const instanceResponse = await elevatedClient.appInstances.getAppInstance();
     const instanceData: any = instanceResponse;
 
-    console.log('[WixSDK] App instance data retrieved:', instanceData);
-
-    return {
+    const result: CachedWixData = {
       instanceId,
       appDefId: instanceData?.instance?.appDefId || instanceData?.appDefId,
       vendorProductId: instanceData?.instance?.vendorProductId || instanceData?.vendorProductId || null,
       instanceData,
     };
+
+    // Cache the result
+    tokenCache.set(cacheKey, result);
+
+    return result;
   } catch (error: any) {
     console.error('[WixSDK] Token verification failed:', error.message);
     throw error;
@@ -105,13 +127,10 @@ export const verifyWixInstance = async (req: Request, res: Response, next: NextF
     const accessToken = authHeader.replace('Bearer ', '');
     const compId = extractCompId(req);
 
-    // Get Wix credentials from environment
     const WIX_APP_ID = process.env.WIX_APP_ID;
     const WIX_APP_SECRET = process.env.WIX_APP_SECRET;
 
     if (!accessToken) {
-      console.warn('[WixSDK] No access token provided');
-      // In development, allow requests without token
       if (process.env.NODE_ENV !== 'production') {
         return next();
       }
@@ -119,27 +138,14 @@ export const verifyWixInstance = async (req: Request, res: Response, next: NextF
     }
 
     if (!WIX_APP_ID || !WIX_APP_SECRET) {
-      console.error('[WixSDK] WIX_APP_ID or WIX_APP_SECRET not configured');
       if (process.env.NODE_ENV === 'production') {
         return res.status(500).json({ error: 'Server configuration error' });
       }
-      // In development, log warning but continue
-      console.warn('[WixSDK] Development mode - allowing request despite missing credentials');
       return next();
     }
 
-    // Verify token and get instance data
     const wixData = await verifyAccessToken(accessToken, WIX_APP_ID, WIX_APP_SECRET);
 
-    console.log('[WixSDK] Authentication successful');
-    console.log('[WixSDK] Instance ID:', wixData.instanceId);
-    console.log('[WixSDK] App Def ID:', wixData.appDefId || 'N/A');
-    console.log('[WixSDK] Vendor Product ID (Plan):', wixData.vendorProductId || 'N/A');
-    if (compId) {
-      console.log('[WixSDK] Component ID:', compId);
-    }
-
-    // Attach Wix data to request object for use in controllers
     req.wix = {
       instanceId: wixData.instanceId,
       appDefId: wixData.appDefId,
@@ -150,14 +156,9 @@ export const verifyWixInstance = async (req: Request, res: Response, next: NextF
 
     next();
   } catch (err: any) {
-    console.error('[WixSDK] Authentication failed:', err.message);
-
-    // In development, log error but allow request
     if (process.env.NODE_ENV !== 'production') {
-      console.warn('[WixSDK] Development mode - allowing request despite authentication failure');
       return next();
     }
-
     return res.status(401).json({ error: 'Invalid or expired access token' });
   }
 };
@@ -166,13 +167,12 @@ export const verifyWixInstance = async (req: Request, res: Response, next: NextF
  * Optional middleware - only verifies token if present
  * Use this for endpoints that should work both with and without Wix authentication
  */
-export const optionalWixAuth = async (req: Request, res: Response, next: NextFunction) => {
+export const optionalWixAuth = async (req: Request, _res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization || '';
     const accessToken = authHeader.replace('Bearer ', '');
 
     if (!accessToken) {
-      // No token provided, continue without Wix data
       return next();
     }
 
@@ -181,11 +181,9 @@ export const optionalWixAuth = async (req: Request, res: Response, next: NextFun
     const compId = extractCompId(req);
 
     if (!WIX_APP_ID || !WIX_APP_SECRET) {
-      console.warn('[WixSDK] Optional auth - credentials not configured, continuing without auth');
       return next();
     }
 
-    // Verify token and get instance data
     const wixData = await verifyAccessToken(accessToken, WIX_APP_ID, WIX_APP_SECRET);
 
     req.wix = {
@@ -195,13 +193,8 @@ export const optionalWixAuth = async (req: Request, res: Response, next: NextFun
       compId,
       decodedToken: wixData.instanceData,
     };
-
-    console.log('[WixSDK] Optional auth - token verified for instance:', wixData.instanceId);
-    console.log('[WixSDK] Optional auth - appDefId:', wixData.appDefId || 'N/A');
-    console.log('[WixSDK] Optional auth - vendorProductId:', wixData.vendorProductId || 'N/A');
-  } catch (err: any) {
-    // Token invalid, but that's okay for optional auth
-    console.log('[WixSDK] Optional auth - invalid token, continuing without Wix data:', err.message);
+  } catch {
+    // Token invalid, continue without Wix data
   }
 
   next();
