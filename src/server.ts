@@ -183,10 +183,19 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
       hasPremium = !!req.wix?.vendorProductId;
     }
 
+    // Include auth info in response to avoid separate request
+    const authHeader = req.headers.authorization;
+
     res.json({
       ...config!.widget_config,
       widgetName: config!.widgetName || '',
-      hasPremium
+      hasPremium,
+      auth: {
+        instanceId,
+        compId,
+        instanceToken: authHeader || null,
+        isAuthenticated: !!authHeader
+      }
     });
   } catch (error) {
     console.error('Error fetching widget config:', error);
