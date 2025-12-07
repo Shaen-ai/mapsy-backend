@@ -1,11 +1,13 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
+export type PremiumPlanName = 'free' | 'light' | 'business' | 'business-pro';
+
 export interface IAppConfig extends Document {
   app_id: string;
   instanceId?: string;
   compId?: string;
   widgetName?: string;
-  hasPremium?: boolean;
+  premiumPlanName?: PremiumPlanName;
   widget_config: {
     defaultView: 'map' | 'list';
     showHeader: boolean;
@@ -41,8 +43,9 @@ const AppConfigSchema = new Schema<IAppConfig>(
       type: String,
       default: ''
     },
-    hasPremium: {
-      type: Boolean,
+    premiumPlanName: {
+      type: String,
+      enum: ['free', 'light', 'business', 'business-pro'],
       default: undefined
     },
     widget_config: {

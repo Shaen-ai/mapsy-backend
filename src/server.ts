@@ -92,51 +92,57 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
     const instanceId = req.wix?.instanceId;
     const compId = req.wix?.compId;
 
-    const desiredKey = computeConfigKey(instanceId, compId ?? null);
-    const instanceFallbackKey = instanceId ? computeConfigKey(instanceId, null) : null;
+    // If no instanceId, return defaults without creating/querying DB
+    if (!instanceId) {
+      res.json({
+        config: {
+          ...defaultWidgetConfig,
+          widgetName: '',
+          premiumPlanName: 'free'
+        },
+        locations: DEFAULT_LOCATIONS
+      });
+      return;
+    }
 
-    // Build keys to query for config
+    const desiredKey = computeConfigKey(instanceId, compId ?? null);
+    const instanceFallbackKey = computeConfigKey(instanceId, null);
+
+    // Build keys to query for config (no mapsy-default - we don't create it)
     const keysToQuery = [desiredKey];
-    if (instanceFallbackKey && instanceFallbackKey !== desiredKey) {
+    if (instanceFallbackKey !== desiredKey) {
       keysToQuery.push(instanceFallbackKey);
     }
-    keysToQuery.push('mapsy-default');
 
     // Run config and locations queries in parallel
     const [configs, locations] = await Promise.all([
       AppConfig.find({ app_id: { $in: keysToQuery } }).lean(),
-      instanceId && compId
+      compId
         ? Location.find({ instanceId, compId }).sort({ createdAt: -1 }).lean()
         : Promise.resolve(null)
     ]);
 
-    // Find the best matching config
-    let config: typeof configs[0] | null = configs.find(c => c.app_id === desiredKey)
+    // Find the best matching config (no fallback to mapsy-default, no creation)
+    const config = configs.find(c => c.app_id === desiredKey)
       || configs.find(c => c.app_id === instanceFallbackKey)
-      || configs.find(c => c.app_id === 'mapsy-default')
       || null;
 
-    if (!config) {
-      const newConfig = await AppConfig.create({
-        app_id: 'mapsy-default',
-        widget_config: defaultWidgetConfig
-      });
-      config = newConfig.toObject() as typeof configs[0];
-    }
-
-    // Check premium status
-    let hasPremium: boolean;
-    if (config!.hasPremium !== undefined) {
-      hasPremium = config!.hasPremium;
+    // Determine premium plan
+    let premiumPlanName: string;
+    if (config?.premiumPlanName) {
+      premiumPlanName = config.premiumPlanName;
+    } else if (req.wix?.vendorProductId) {
+      // If vendorProductId exists from Wix, treat as 'light' (basic premium)
+      premiumPlanName = 'light';
     } else {
-      hasPremium = !!req.wix?.vendorProductId;
+      premiumPlanName = 'free';
     }
 
     res.json({
       config: {
-        ...config!.widget_config,
-        widgetName: config!.widgetName || '',
-        hasPremium
+        ...(config?.widget_config || defaultWidgetConfig),
+        widgetName: config?.widgetName || '',
+        premiumPlanName
       },
       locations: locations ?? DEFAULT_LOCATIONS
     });
@@ -151,45 +157,53 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
     const instanceId = req.wix?.instanceId;
     const compId = req.wix?.compId;
+    const authHeader = req.headers.authorization;
+
+    // If no instanceId, return defaults without creating/querying DB
+    if (!instanceId) {
+      res.json({
+        ...defaultWidgetConfig,
+        widgetName: '',
+        premiumPlanName: 'free',
+        auth: {
+          instanceId: null,
+          compId: null,
+          instanceToken: authHeader || null,
+          isAuthenticated: !!authHeader
+        }
+      });
+      return;
+    }
 
     const desiredKey = computeConfigKey(instanceId, compId ?? null);
-    const instanceFallbackKey = instanceId ? computeConfigKey(instanceId, null) : null;
+    const instanceFallbackKey = computeConfigKey(instanceId, null);
 
     const keysToQuery = [desiredKey];
-    if (instanceFallbackKey && instanceFallbackKey !== desiredKey) {
+    if (instanceFallbackKey !== desiredKey) {
       keysToQuery.push(instanceFallbackKey);
     }
-    keysToQuery.push('mapsy-default');
 
     const configs = await AppConfig.find({ app_id: { $in: keysToQuery } }).lean();
 
-    let config: typeof configs[0] | null = configs.find(c => c.app_id === desiredKey)
+    // Find the best matching config (no fallback to mapsy-default, no creation)
+    const config = configs.find(c => c.app_id === desiredKey)
       || configs.find(c => c.app_id === instanceFallbackKey)
-      || configs.find(c => c.app_id === 'mapsy-default')
       || null;
 
-    if (!config) {
-      const newConfig = await AppConfig.create({
-        app_id: 'mapsy-default',
-        widget_config: defaultWidgetConfig
-      });
-      config = newConfig.toObject() as typeof configs[0];
-    }
-
-    let hasPremium: boolean;
-    if (config!.hasPremium !== undefined) {
-      hasPremium = config!.hasPremium;
+    // Determine premium plan
+    let premiumPlanName: string;
+    if (config?.premiumPlanName) {
+      premiumPlanName = config.premiumPlanName;
+    } else if (req.wix?.vendorProductId) {
+      premiumPlanName = 'light';
     } else {
-      hasPremium = !!req.wix?.vendorProductId;
+      premiumPlanName = 'free';
     }
-
-    // Include auth info in response to avoid separate request
-    const authHeader = req.headers.authorization;
 
     res.json({
-      ...config!.widget_config,
-      widgetName: config!.widgetName || '',
-      hasPremium,
+      ...(config?.widget_config || defaultWidgetConfig),
+      widgetName: config?.widgetName || '',
+      premiumPlanName,
       auth: {
         instanceId,
         compId,
@@ -308,10 +322,15 @@ app.get('/api/premium-status', optionalWixAuth, async (req, res) => {
   try {
     const vendorProductId = req.wix?.vendorProductId || null;
     const instanceId = req.wix?.instanceId || null;
-    const hasPremium = !!vendorProductId;
+
+    // Determine premium plan based on vendorProductId
+    let premiumPlanName: string = 'free';
+    if (vendorProductId) {
+      premiumPlanName = 'light'; // Default to light if any vendorProductId exists
+    }
 
     res.json({
-      hasPremium,
+      premiumPlanName,
       vendorProductId,
       instanceId
     });
