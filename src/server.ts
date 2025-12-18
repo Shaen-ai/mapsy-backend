@@ -92,8 +92,12 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
     const instanceId = req.wix?.instanceId;
     const compId = req.wix?.compId;
 
-    // If no instanceId, return defaults without creating/querying DB
-    if (!instanceId) {
+    console.log('[widget-data] instanceId:', instanceId || 'NONE');
+    console.log('[widget-data] compId:', compId || 'NONE');
+
+    // CASE 1: No instanceId and no compId - return default data
+    if (!instanceId && !compId) {
+      console.log('[widget-data] No auth, no compId - returning default data');
       res.json({
         config: {
           ...defaultWidgetConfig,
@@ -105,6 +109,33 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
       return;
     }
 
+    // CASE 2: Has compId but no instanceId (EDITOR MODE)
+    // Fetch data by compId only, without instance authentication
+    if (!instanceId && compId) {
+      console.log('[widget-data] Editor mode - compId without auth:', compId);
+
+      // Find ANY location with this compId (across all instances)
+      // This allows editor to see the widget's data without authentication
+      const [config, locations] = await Promise.all([
+        AppConfig.findOne({ compId }).lean(),
+        Location.find({ compId }).sort({ createdAt: -1 }).lean()
+      ]);
+
+      // Return actual premium status from config (editor should see real status)
+      const premiumPlanName = config?.premiumPlanName || 'free';
+
+      res.json({
+        config: {
+          ...(config?.widget_config || defaultWidgetConfig),
+          widgetName: config?.widgetName || '',
+          premiumPlanName // Return actual premium status
+        },
+        locations: locations.length > 0 ? locations : DEFAULT_LOCATIONS
+      });
+      return;
+    }
+
+    // CASE 3: Has instanceId (authenticated request - published site)
     const desiredKey = computeConfigKey(instanceId, compId ?? null);
     const instanceFallbackKey = computeConfigKey(instanceId, null);
 
@@ -223,7 +254,7 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
     const compId = req.wix?.compId;
     const targetKey = computeConfigKey(instanceId, compId ?? null);
 
-    const { widgetName, ...widgetConfigFields } = req.body;
+    const { widgetName, premiumPlanName, ...widgetConfigFields } = req.body;
 
     const updateDoc: Record<string, any> = {
       $set: {
@@ -252,6 +283,17 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       updateDoc.$set.widgetName = widgetName;
     }
 
+    // Save premium plan name if provided
+    if (premiumPlanName !== undefined) {
+      const validPlans = ['free', 'light', 'business', 'business-pro'];
+      if (validPlans.includes(premiumPlanName)) {
+        updateDoc.$set.premiumPlanName = premiumPlanName;
+        console.log('[widget-config] Saving premiumPlanName:', premiumPlanName);
+      } else {
+        console.warn('[widget-config] Invalid premiumPlanName:', premiumPlanName);
+      }
+    }
+
     const config = await AppConfig.findOneAndUpdate(
       { app_id: targetKey },
       updateDoc,
@@ -260,7 +302,8 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
 
     res.json({
       ...config.widget_config,
-      widgetName: config.widgetName || ''
+      widgetName: config.widgetName || '',
+      premiumPlanName: config.premiumPlanName || 'free'
     });
   } catch (error) {
     console.error('Error updating widget config:', error);

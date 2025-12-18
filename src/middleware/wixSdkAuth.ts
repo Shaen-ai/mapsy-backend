@@ -166,21 +166,40 @@ export const verifyWixInstance = async (req: Request, res: Response, next: NextF
 /**
  * Optional middleware - only verifies token if present
  * Use this for endpoints that should work both with and without Wix authentication
+ *
+ * NEW: Also extracts comp-id even without auth (for editor mode)
  */
 export const optionalWixAuth = async (req: Request, _res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization || '';
     const accessToken = authHeader.replace('Bearer ', '');
+    const compId = extractCompId(req);
 
+    // If no auth token, but comp-id exists (editor mode), attach comp-id only
     if (!accessToken) {
+      if (compId) {
+        req.wix = {
+          instanceId: '', // Empty instanceId for editor mode
+          compId,
+          decodedToken: null,
+        };
+        console.log('[OptionalWixAuth] No auth, but comp-id found (editor mode):', compId);
+      }
       return next();
     }
 
     const WIX_APP_ID = process.env.WIX_APP_ID;
     const WIX_APP_SECRET = process.env.WIX_APP_SECRET;
-    const compId = extractCompId(req);
 
     if (!WIX_APP_ID || !WIX_APP_SECRET) {
+      // Still attach comp-id if available
+      if (compId) {
+        req.wix = {
+          instanceId: '',
+          compId,
+          decodedToken: null,
+        };
+      }
       return next();
     }
 
@@ -195,6 +214,15 @@ export const optionalWixAuth = async (req: Request, _res: Response, next: NextFu
     };
   } catch {
     // Token invalid, continue without Wix data
+    // But still try to attach comp-id if available
+    const compId = extractCompId(req);
+    if (compId) {
+      req.wix = {
+        instanceId: '',
+        compId,
+        decodedToken: null,
+      };
+    }
   }
 
   next();
