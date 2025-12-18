@@ -96,7 +96,8 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
     console.log('[widget-data] compId:', compId || 'NONE');
 
     // CASE 1: No instanceId and no compId - return default data
-    if (!instanceId && !compId) {
+    // Check explicitly for undefined/null, not just falsy (empty string '' is valid for instanceId in editor mode)
+    if ((!instanceId || instanceId === '') && (!compId || compId === '')) {
       console.log('[widget-data] No auth, no compId - returning default data');
       res.json({
         config: {
@@ -111,8 +112,9 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
 
     // CASE 2: Has compId but no instanceId (EDITOR MODE)
     // Fetch data by compId only, without instance authentication
-    if (!instanceId && compId) {
-      console.log('[widget-data] Editor mode - compId without auth:', compId);
+    // instanceId will be empty string '' in editor mode, compId should be the actual ID
+    if ((!instanceId || instanceId === '') && compId && compId !== '') {
+      console.log('[widget-data] ✅ Editor mode - compId without auth:', compId);
 
       // Find ANY location with this compId (across all instances)
       // This allows editor to see the widget's data without authentication

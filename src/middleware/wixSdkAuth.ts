@@ -26,27 +26,36 @@ declare global {
  * Extract component ID from request headers, query params, or body
  */
 const extractCompId = (req: Request): string | undefined => {
+  // Check x-wix-comp-id header (Express normalizes header names to lowercase)
   const headerCompId = req.headers['x-wix-comp-id'];
-  if (typeof headerCompId === 'string') {
-    return headerCompId;
+  if (typeof headerCompId === 'string' && headerCompId.trim()) {
+    console.log('[extractCompId] Found comp-id in header:', headerCompId);
+    return headerCompId.trim();
   }
-  if (Array.isArray(headerCompId)) {
-    return headerCompId[0];
+  if (Array.isArray(headerCompId) && headerCompId.length > 0 && headerCompId[0]) {
+    console.log('[extractCompId] Found comp-id in header (array):', headerCompId[0]);
+    return headerCompId[0].trim();
   }
 
+  // Check query params as fallback
   const queryCompId = req.query.compId;
   const queryCompIdAlt = req.query.comp_id || req.query['comp-id'];
-  if (typeof queryCompId === 'string') {
-    return queryCompId;
+  if (typeof queryCompId === 'string' && queryCompId.trim()) {
+    console.log('[extractCompId] Found comp-id in query (compId):', queryCompId);
+    return queryCompId.trim();
   }
-  if (typeof queryCompIdAlt === 'string') {
-    return queryCompIdAlt;
-  }
-
-  if (req.body && typeof req.body.compId === 'string') {
-    return req.body.compId;
+  if (typeof queryCompIdAlt === 'string' && queryCompIdAlt.trim()) {
+    console.log('[extractCompId] Found comp-id in query (alt):', queryCompIdAlt);
+    return queryCompIdAlt.trim();
   }
 
+  // Check body as last fallback
+  if (req.body && typeof req.body.compId === 'string' && req.body.compId.trim()) {
+    console.log('[extractCompId] Found comp-id in body:', req.body.compId);
+    return req.body.compId.trim();
+  }
+
+  console.log('[extractCompId] No comp-id found. Headers present:', Object.keys(req.headers));
   return undefined;
 };
 
