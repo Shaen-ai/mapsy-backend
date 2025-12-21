@@ -98,7 +98,6 @@ const LocationSchema = new Schema<ILocation>(
 LocationSchema.index({ latitude: 1, longitude: 1 });
 
 // Index for instance-based queries (for Wix multi-tenancy)
-LocationSchema.index({ instanceId: 1 });
 LocationSchema.index({ instanceId: 1, compId: 1 });
 
 export default mongoose.model<ILocation>('Location', LocationSchema);
