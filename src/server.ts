@@ -89,6 +89,12 @@ const computeConfigKey = (instanceValue?: string, compValue?: string | null) => 
 // Combined endpoint - fetches both config and locations in a single request
 app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
   try {
+    console.log('[widget-data] ========== REQUEST START ==========');
+    console.log('[widget-data] Raw headers:', JSON.stringify(req.headers, null, 2));
+    console.log('[widget-data] x-wix-comp-id header:', req.headers['x-wix-comp-id'] || 'NOT PRESENT');
+    console.log('[widget-data] req.wix exists:', !!req.wix);
+    console.log('[widget-data] req.wix:', JSON.stringify(req.wix));
+
     const instanceId = req.wix?.instanceId;
     const compId = req.wix?.compId;
 

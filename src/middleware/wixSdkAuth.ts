@@ -26,14 +26,22 @@ declare global {
  * Extract component ID from request headers, query params, or body
  */
 const extractCompId = (req: Request): string | undefined => {
+  // Debug: Log all request details
+  console.log('[extractCompId] ========== DEBUG ==========');
+  console.log('[extractCompId] Request URL:', req.url);
+  console.log('[extractCompId] Request method:', req.method);
+  console.log('[extractCompId] All headers:', JSON.stringify(req.headers, null, 2));
+
   // Check x-wix-comp-id header (Express normalizes header names to lowercase)
   const headerCompId = req.headers['x-wix-comp-id'];
+  console.log('[extractCompId] x-wix-comp-id header value:', headerCompId, '(type:', typeof headerCompId, ')');
+
   if (typeof headerCompId === 'string' && headerCompId.trim()) {
-    console.log('[extractCompId] Found comp-id in header:', headerCompId);
+    console.log('[extractCompId] ✅ Found comp-id in header:', headerCompId);
     return headerCompId.trim();
   }
   if (Array.isArray(headerCompId) && headerCompId.length > 0 && headerCompId[0]) {
-    console.log('[extractCompId] Found comp-id in header (array):', headerCompId[0]);
+    console.log('[extractCompId] ✅ Found comp-id in header (array):', headerCompId[0]);
     return headerCompId[0].trim();
   }
 
@@ -41,21 +49,22 @@ const extractCompId = (req: Request): string | undefined => {
   const queryCompId = req.query.compId;
   const queryCompIdAlt = req.query.comp_id || req.query['comp-id'];
   if (typeof queryCompId === 'string' && queryCompId.trim()) {
-    console.log('[extractCompId] Found comp-id in query (compId):', queryCompId);
+    console.log('[extractCompId] ✅ Found comp-id in query (compId):', queryCompId);
     return queryCompId.trim();
   }
   if (typeof queryCompIdAlt === 'string' && queryCompIdAlt.trim()) {
-    console.log('[extractCompId] Found comp-id in query (alt):', queryCompIdAlt);
+    console.log('[extractCompId] ✅ Found comp-id in query (alt):', queryCompIdAlt);
     return queryCompIdAlt.trim();
   }
 
   // Check body as last fallback
   if (req.body && typeof req.body.compId === 'string' && req.body.compId.trim()) {
-    console.log('[extractCompId] Found comp-id in body:', req.body.compId);
+    console.log('[extractCompId] ✅ Found comp-id in body:', req.body.compId);
     return req.body.compId.trim();
   }
 
-  console.log('[extractCompId] No comp-id found. Headers present:', Object.keys(req.headers));
+  console.log('[extractCompId] ❌ No comp-id found anywhere');
+  console.log('[extractCompId] ================================');
   return undefined;
 };
 
@@ -179,10 +188,12 @@ export const verifyWixInstance = async (req: Request, res: Response, next: NextF
  * NEW: Also extracts comp-id even without auth (for editor mode)
  */
 export const optionalWixAuth = async (req: Request, _res: Response, next: NextFunction) => {
+  // Extract compId FIRST, before try block, so it's available in catch
+  const compId = extractCompId(req);
+
   try {
     const authHeader = req.headers.authorization || '';
     const accessToken = authHeader.replace('Bearer ', '');
-    const compId = extractCompId(req);
 
     // If no auth token, but comp-id exists (editor mode), attach comp-id only
     if (!accessToken) {
@@ -192,7 +203,6 @@ export const optionalWixAuth = async (req: Request, _res: Response, next: NextFu
           compId,
           decodedToken: null,
         };
-        console.log('[OptionalWixAuth] No auth, but comp-id found (editor mode):', compId);
       }
       return next();
     }
@@ -222,9 +232,8 @@ export const optionalWixAuth = async (req: Request, _res: Response, next: NextFu
       decodedToken: wixData.instanceData,
     };
   } catch {
-    // Token invalid, continue without Wix data
-    // But still try to attach comp-id if available
-    const compId = extractCompId(req);
+    // Token verification failed (editor mode with invalid token)
+    // Fallback to compId-only mode
     if (compId) {
       req.wix = {
         instanceId: '',
