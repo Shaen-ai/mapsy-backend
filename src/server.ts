@@ -258,11 +258,40 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
 
 app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
-    const instanceId = req.wix?.instanceId;
+    const instanceId = req.wix?.instanceId || req.body.instanceId;
     const compId = req.wix?.compId;
-    const targetKey = computeConfigKey(instanceId, compId ?? null);
 
     const { widgetName, premiumPlanName, ...widgetConfigFields } = req.body;
+
+    /* 🔽 NEW: plan-only update (from Laravel webhook) */
+    const isPlanOnlyUpdate =
+      instanceId &&
+      premiumPlanName !== undefined &&
+      !compId;
+
+    if (isPlanOnlyUpdate) {
+      const validPlans = ['free', 'light', 'business', 'business-pro'];
+
+      if (!validPlans.includes(premiumPlanName)) {
+        return res.status(400).json({ error: 'Invalid premiumPlanName' });
+      }
+
+      await AppConfig.updateMany(
+        { instanceId },
+        { $set: { premiumPlanName } }
+      );
+
+      console.log(
+        '[widget-config] Bulk plan update:',
+        instanceId,
+        premiumPlanName
+      );
+
+      return res.json({ success: true, premiumPlanName });
+    }
+
+    /* ⬇️ EXISTING LOGIC (unchanged) */
+    const targetKey = computeConfigKey(instanceId, compId ?? null);
 
     const updateDoc: Record<string, any> = {
       $set: {
@@ -291,14 +320,11 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       updateDoc.$set.widgetName = widgetName;
     }
 
-    // Save premium plan name if provided
     if (premiumPlanName !== undefined) {
       const validPlans = ['free', 'light', 'business', 'business-pro'];
       if (validPlans.includes(premiumPlanName)) {
         updateDoc.$set.premiumPlanName = premiumPlanName;
         console.log('[widget-config] Saving premiumPlanName:', premiumPlanName);
-      } else {
-        console.warn('[widget-config] Invalid premiumPlanName:', premiumPlanName);
       }
     }
 
@@ -313,11 +339,13 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       widgetName: config.widgetName || '',
       premiumPlanName: config.premiumPlanName || 'free'
     });
+
   } catch (error) {
     console.error('Error updating widget config:', error);
     res.status(500).json({ error: 'Failed to update widget configuration' });
   }
 });
+
 
 // Get all widgets for an instance (used by dashboard when no compId is specified)
 app.get('/api/widgets', optionalWixAuth, async (req, res) => {

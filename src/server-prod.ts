@@ -106,6 +106,7 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
 });
 
 app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
+  return {"asd":"qweqwr"};
   try {
     const defaultWidgetConfig = {
       defaultView: 'map',
