@@ -259,9 +259,50 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
 app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
   try {
     const instanceId = req.wix?.instanceId || req.body.instanceId;
-    const compId = req.wix?.compId;
+    const compId = req.wix?.compId || req.headers['x-wix-comp-id'] as string;
 
     const { widgetName, premiumPlanName, ...widgetConfigFields } = req.body;
+
+    /* 🔽 NEW: Settings panel update with compId-only (no auth required) */
+    // If we have a compId from header but no instanceId, update by compId only
+    if (compId && !instanceId) {
+      console.log('[widget-config] 📝 Settings panel update with compId only:', compId);
+
+      const updateDoc: Record<string, any> = {
+        $set: {
+          'widget_config': widgetConfigFields
+        }
+      };
+
+      if (widgetName !== undefined) {
+        updateDoc.$set.widgetName = widgetName;
+      }
+
+      if (premiumPlanName !== undefined) {
+        const validPlans = ['free', 'light', 'business', 'business-pro'];
+        if (validPlans.includes(premiumPlanName)) {
+          updateDoc.$set.premiumPlanName = premiumPlanName;
+        }
+      }
+
+      const config = await AppConfig.findOneAndUpdate(
+        { compId },
+        updateDoc,
+        { new: true }
+      );
+
+      if (!config) {
+        return res.status(404).json({ error: 'Widget configuration not found for this compId' });
+      }
+
+      console.log('[widget-config] ✅ Updated config for compId:', compId);
+
+      return res.json({
+        ...config.widget_config,
+        widgetName: config.widgetName || '',
+        premiumPlanName: config.premiumPlanName || 'free'
+      });
+    }
 
     /* 🔽 NEW: plan-only update (from Laravel webhook) */
     const isPlanOnlyUpdate =
