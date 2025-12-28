@@ -361,11 +361,28 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       updateDoc.$set.widgetName = widgetName;
     }
 
+    // Handle premium plan inheritance and instance-wide updates
     if (premiumPlanName !== undefined) {
       const validPlans = ['free', 'light', 'business', 'business-pro'];
       if (validPlans.includes(premiumPlanName)) {
         updateDoc.$set.premiumPlanName = premiumPlanName;
         console.log('[widget-config] Saving premiumPlanName:', premiumPlanName);
+
+        // Update ALL apps under this instance with the new premium plan
+        if (instanceId) {
+          await AppConfig.updateMany(
+            { instanceId, app_id: { $ne: targetKey } },
+            { $set: { premiumPlanName } }
+          );
+          console.log('[widget-config] Updated premiumPlanName for all apps in instance:', instanceId);
+        }
+      }
+    } else if (instanceId) {
+      // No premiumPlanName provided - check if we need to inherit from existing apps
+      const existingApp = await AppConfig.findOne({ instanceId }).lean();
+      if (existingApp?.premiumPlanName) {
+        updateDoc.$set.premiumPlanName = existingApp.premiumPlanName;
+        console.log('[widget-config] Inheriting premiumPlanName from existing app:', existingApp.premiumPlanName);
       }
     }
 
