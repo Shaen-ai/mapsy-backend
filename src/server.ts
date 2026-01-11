@@ -253,7 +253,7 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
       });
 
       const savedConfig = await newConfig.save();
-      config = savedConfig.toObject();
+      config = savedConfig.toObject() as any;
       console.log('[widget-config] ✅ Created new config for instanceId:', instanceId, 'compId:', compId);
     }
 
