@@ -317,18 +317,28 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
         return res.status(400).json({ error: 'Invalid premiumPlanName' });
       }
 
-      await AppConfig.updateMany(
-        { instanceId },
-        { $set: { premiumPlanName } }
-      );
 
-      console.log(
-        '[widget-config] Bulk plan update:',
-        instanceId,
+      const existingDocs = await AppConfig.find({ instanceId });
+
+      if (existingDocs.length > 0) {
+        // Update all existing docs for this instance
+        await AppConfig.updateMany(
+          { instanceId },
+          { $set: { premiumPlanName } }
+        );
+        console.log('[widget-config] Plan-only update for existing docs:', instanceId, premiumPlanName);
+
+      } else {
+        // No docs exist → insert a single instance-level doc
+        const newDoc = new AppConfig({ instanceId, premiumPlanName });
+        await newDoc.save();
+        console.log('[widget-config] Plan-only insert (instance-level):', instanceId, premiumPlanName);
+      }
+
+      return res.json({
+        success: true,
         premiumPlanName
-      );
-
-      return res.json({ success: true, premiumPlanName });
+      });
     }
 
     /* ⬇️ EXISTING LOGIC (unchanged) */
