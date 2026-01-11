@@ -252,7 +252,8 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
         premiumPlanName
       });
 
-      config = await newConfig.save();
+      const savedConfig = await newConfig.save();
+      config = savedConfig.toObject();
       console.log('[widget-config] ✅ Created new config for instanceId:', instanceId, 'compId:', compId);
     }
 
