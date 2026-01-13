@@ -162,7 +162,7 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
     ]);
 
     // Find the best matching config (no fallback to mapsy-default, no creation)
-    const config = configs.find(c => c.app_id === desiredKey)
+    let config = configs.find(c => c.app_id === desiredKey)
       || configs.find(c => c.app_id === instanceFallbackKey)
       || null;
 
@@ -175,6 +175,24 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
       premiumPlanName = 'light';
     } else {
       premiumPlanName = 'free';
+    }
+
+    // Create new config if both instanceId and compId exist but no config found
+    if (!config && instanceId && compId) {
+      console.log('[widget-data] No config found, creating new record with app_id:', desiredKey);
+
+      const newConfig = new AppConfig({
+        app_id: desiredKey,
+        instanceId,
+        compId,
+        widget_config: defaultWidgetConfig,
+        widgetName: '',
+        premiumPlanName
+      });
+
+      const savedConfig = await newConfig.save();
+      config = savedConfig.toObject() as any;
+      console.log('[widget-data] ✅ Created new config for instanceId:', instanceId, 'compId:', compId);
     }
 
     res.json({
