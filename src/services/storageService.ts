@@ -96,24 +96,61 @@ class StorageService {
    */
   async uploadBase64Image(base64Data: string): Promise<string | null> {
     try {
+      if (!base64Data || typeof base64Data !== 'string') {
+        console.error('[uploadBase64Image] Invalid input: base64Data is empty or not a string');
+        return null;
+      }
+
+      console.log('[uploadBase64Image] Processing image, data length:', base64Data.length);
+
       // Remove data URI prefix if present (e.g., "data:image/png;base64,")
       let base64String = base64Data;
       let mimeType = 'image/png'; // default
       let extension = 'png';
 
-      const dataUriMatch = base64Data.match(/^data:([^;]+);base64,(.+)$/);
+      // Try to match data URI format: data:image/png;base64,xxxxx
+      const dataUriMatch = base64Data.match(/^data:([^;,]+)(?:;[^,]*)?,(.+)$/s);
       if (dataUriMatch) {
         mimeType = dataUriMatch[1];
         base64String = dataUriMatch[2];
+        console.log('[uploadBase64Image] Extracted from data URI - mimeType:', mimeType);
+        
         // Extract extension from mime type
         const extMatch = mimeType.match(/image\/(\w+)/);
         if (extMatch) {
           extension = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
         }
+      } else {
+        // Try to detect image type from base64 header bytes
+        const headerBytes = base64String.substring(0, 20);
+        if (headerBytes.startsWith('/9j/')) {
+          mimeType = 'image/jpeg';
+          extension = 'jpg';
+        } else if (headerBytes.startsWith('iVBORw')) {
+          mimeType = 'image/png';
+          extension = 'png';
+        } else if (headerBytes.startsWith('R0lGOD')) {
+          mimeType = 'image/gif';
+          extension = 'gif';
+        } else if (headerBytes.startsWith('UklGR')) {
+          mimeType = 'image/webp';
+          extension = 'webp';
+        }
+        console.log('[uploadBase64Image] Detected from header - mimeType:', mimeType);
       }
+
+      // Clean up base64 string (remove whitespace, newlines)
+      base64String = base64String.replace(/[\s\n\r]/g, '');
 
       // Convert base64 to buffer
       const buffer = Buffer.from(base64String, 'base64');
+      
+      if (buffer.length === 0) {
+        console.error('[uploadBase64Image] Buffer is empty after base64 decode');
+        return null;
+      }
+      
+      console.log('[uploadBase64Image] Buffer size:', buffer.length, 'bytes');
 
       // Generate unique filename
       const uniqueId = crypto.randomBytes(8).toString('hex');
@@ -133,13 +170,19 @@ class StorageService {
         stream: null as any,
       };
 
+      let result: string;
       if (this.useGCS && this.bucket) {
-        return await this.uploadToGCS(pseudoFile);
+        console.log('[uploadBase64Image] Uploading to GCS...');
+        result = await this.uploadToGCS(pseudoFile);
       } else {
-        return await this.uploadToLocal(pseudoFile);
+        console.log('[uploadBase64Image] Uploading to local storage...');
+        result = await this.uploadToLocal(pseudoFile);
       }
+      
+      console.log('[uploadBase64Image] Upload successful:', result);
+      return result;
     } catch (error) {
-      console.error('Base64 upload error:', error);
+      console.error('[uploadBase64Image] Error:', error);
       return null;
     }
   }

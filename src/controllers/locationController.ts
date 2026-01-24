@@ -187,16 +187,32 @@ export class LocationController {
       }
 
       // Handle image upload - supports both multipart form-data and base64 in JSON body
+      // Also check for 'image_url' field (some frontends may send it with this name)
+      const imageField = req.body.image || req.body.image_url;
+      
       if (req.file) {
+        console.log('[create] Processing multipart file upload');
         const imageUrl = await storageService.uploadImage(req.file);
         if (imageUrl) {
           locationData.image_url = imageUrl;
+          console.log('[create] Image uploaded successfully:', imageUrl);
         }
-      } else if (req.body.image && typeof req.body.image === 'string') {
-        // Handle base64 image from JSON body
-        const imageUrl = await storageService.uploadBase64Image(req.body.image);
-        if (imageUrl) {
-          locationData.image_url = imageUrl;
+      } else if (imageField && typeof imageField === 'string') {
+        // Check if it's base64 data or an existing URL
+        if (imageField.startsWith('data:') || (!imageField.startsWith('http') && !imageField.startsWith('/'))) {
+          // Handle base64 image from JSON body
+          console.log('[create] Processing base64 image upload');
+          const imageUrl = await storageService.uploadBase64Image(imageField);
+          if (imageUrl) {
+            locationData.image_url = imageUrl;
+            console.log('[create] Base64 image uploaded successfully:', imageUrl);
+          } else {
+            console.error('[create] Failed to upload base64 image');
+          }
+        } else {
+          // It's an existing URL, use it directly
+          console.log('[create] Using existing image URL:', imageField);
+          locationData.image_url = imageField;
         }
       }
 
@@ -257,7 +273,13 @@ export class LocationController {
       };
 
       // Handle image upload - supports both multipart form-data and base64 in JSON body
+      // Also check for 'image_url' field (some frontends may send it with this name)
+      const imageField = req.body.image || req.body.image_url;
+      
+      console.log('[update] Image handling - req.file:', !!req.file, 'imageField:', imageField ? imageField.substring(0, 50) + '...' : 'none');
+      
       if (req.file) {
+        console.log('[update] Processing multipart file upload');
         if (location.image_url) {
           await storageService.deleteImage(location.image_url);
         }
@@ -265,21 +287,35 @@ export class LocationController {
         const imageUrl = await storageService.uploadImage(req.file);
         if (imageUrl) {
           updateData.image_url = imageUrl;
+          console.log('[update] Image uploaded successfully:', imageUrl);
         }
-      } else if (req.body.image && typeof req.body.image === 'string') {
-        // Handle base64 image from JSON body
-        // Check if it's a new image (base64) or existing URL
-        if (req.body.image.startsWith('data:') || !req.body.image.startsWith('http')) {
+      } else if (imageField && typeof imageField === 'string') {
+        // Check if it's base64 data (starts with 'data:' or is raw base64)
+        const isBase64 = imageField.startsWith('data:') || 
+                         (!imageField.startsWith('http') && !imageField.startsWith('/') && imageField.length > 100);
+        
+        if (isBase64) {
+          console.log('[update] Processing base64 image upload');
           if (location.image_url) {
             await storageService.deleteImage(location.image_url);
           }
 
-          const imageUrl = await storageService.uploadBase64Image(req.body.image);
+          const imageUrl = await storageService.uploadBase64Image(imageField);
           if (imageUrl) {
             updateData.image_url = imageUrl;
+            console.log('[update] Base64 image uploaded successfully:', imageUrl);
+          } else {
+            console.error('[update] Failed to upload base64 image');
+          }
+        } else if (imageField.startsWith('http') || imageField.startsWith('/')) {
+          // It's an existing URL - preserve it if different from current
+          if (imageField !== location.image_url) {
+            console.log('[update] Updating to new image URL:', imageField);
+            updateData.image_url = imageField;
+          } else {
+            console.log('[update] Keeping existing image URL');
           }
         }
-        // If it's an existing URL (starts with http), don't update the image_url
       }
 
       if (updateData.address && (updateData.address !== location.address || !location.latitude || !location.longitude)) {
