@@ -2,6 +2,7 @@ import { Storage } from '@google-cloud/storage';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 
 class StorageService {
   private storage?: Storage;
@@ -88,6 +89,61 @@ class StorageService {
     return `/uploads/locations/${filename}`;
   }
 
+  /**
+   * Upload image from base64 string
+   * @param base64Data - Base64 encoded image data (with or without data URI prefix)
+   * @returns URL of the uploaded image or null on failure
+   */
+  async uploadBase64Image(base64Data: string): Promise<string | null> {
+    try {
+      // Remove data URI prefix if present (e.g., "data:image/png;base64,")
+      let base64String = base64Data;
+      let mimeType = 'image/png'; // default
+      let extension = 'png';
+
+      const dataUriMatch = base64Data.match(/^data:([^;]+);base64,(.+)$/);
+      if (dataUriMatch) {
+        mimeType = dataUriMatch[1];
+        base64String = dataUriMatch[2];
+        // Extract extension from mime type
+        const extMatch = mimeType.match(/image\/(\w+)/);
+        if (extMatch) {
+          extension = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
+        }
+      }
+
+      // Convert base64 to buffer
+      const buffer = Buffer.from(base64String, 'base64');
+
+      // Generate unique filename
+      const uniqueId = crypto.randomBytes(8).toString('hex');
+      const filename = `${Date.now()}_${uniqueId}.${extension}`;
+
+      // Create a pseudo-file object for the upload methods
+      const pseudoFile: Express.Multer.File = {
+        fieldname: 'image',
+        originalname: filename,
+        encoding: '7bit',
+        mimetype: mimeType,
+        buffer: buffer,
+        size: buffer.length,
+        destination: '',
+        filename: filename,
+        path: '',
+        stream: null as any,
+      };
+
+      if (this.useGCS && this.bucket) {
+        return await this.uploadToGCS(pseudoFile);
+      } else {
+        return await this.uploadToLocal(pseudoFile);
+      }
+    } catch (error) {
+      console.error('Base64 upload error:', error);
+      return null;
+    }
+  }
+
   async deleteImage(imageUrl: string): Promise<boolean> {
     try {
       if (this.useGCS && this.bucket && imageUrl.includes('storage.googleapis.com')) {
@@ -132,7 +188,7 @@ class StorageService {
 export const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 20 * 1024 * 1024 // 20MB limit
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {

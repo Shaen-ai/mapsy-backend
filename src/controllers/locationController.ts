@@ -186,8 +186,15 @@ export class LocationController {
         }
       }
 
+      // Handle image upload - supports both multipart form-data and base64 in JSON body
       if (req.file) {
         const imageUrl = await storageService.uploadImage(req.file);
+        if (imageUrl) {
+          locationData.image_url = imageUrl;
+        }
+      } else if (req.body.image && typeof req.body.image === 'string') {
+        // Handle base64 image from JSON body
+        const imageUrl = await storageService.uploadBase64Image(req.body.image);
         if (imageUrl) {
           locationData.image_url = imageUrl;
         }
@@ -249,6 +256,7 @@ export class LocationController {
         business_hours: req.body.business_hours || location.business_hours
       };
 
+      // Handle image upload - supports both multipart form-data and base64 in JSON body
       if (req.file) {
         if (location.image_url) {
           await storageService.deleteImage(location.image_url);
@@ -258,6 +266,20 @@ export class LocationController {
         if (imageUrl) {
           updateData.image_url = imageUrl;
         }
+      } else if (req.body.image && typeof req.body.image === 'string') {
+        // Handle base64 image from JSON body
+        // Check if it's a new image (base64) or existing URL
+        if (req.body.image.startsWith('data:') || !req.body.image.startsWith('http')) {
+          if (location.image_url) {
+            await storageService.deleteImage(location.image_url);
+          }
+
+          const imageUrl = await storageService.uploadBase64Image(req.body.image);
+          if (imageUrl) {
+            updateData.image_url = imageUrl;
+          }
+        }
+        // If it's an existing URL (starts with http), don't update the image_url
       }
 
       if (updateData.address && (updateData.address !== location.address || !location.latitude || !location.longitude)) {
