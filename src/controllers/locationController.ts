@@ -169,6 +169,11 @@ export class LocationController {
         return res.status(400).json({ errors: errors.array() });
       }
 
+      const parsedRadius =
+        req.body.radius === '' || req.body.radius == null
+          ? undefined
+          : Number(req.body.radius);
+
       const locationData: Partial<ILocation> = {
         name: req.body.name,
         address: req.body.address,
@@ -178,6 +183,11 @@ export class LocationController {
         category: req.body.category || 'store',
         business_hours: req.body.business_hours
       };
+
+      if (parsedRadius != null && !Number.isNaN(parsedRadius) && parsedRadius > 0) {
+        locationData.radius = parsedRadius;
+        locationData.radius_unit = req.body.radius_unit === 'mi' ? 'mi' : 'km';
+      }
 
       if (req.wix && req.wix.instanceId) {
         locationData.instanceId = req.wix.instanceId;
@@ -272,6 +282,26 @@ export class LocationController {
         business_hours: req.body.business_hours || location.business_hours
       };
 
+      // Only touch radius when the client explicitly sent the field (FormData always does)
+      const hasRadiusField = Object.prototype.hasOwnProperty.call(req.body, 'radius');
+      const clearRadius =
+        hasRadiusField &&
+        (req.body.radius === '' || req.body.radius === null);
+      const parsedRadius =
+        !hasRadiusField || clearRadius ? undefined : Number(req.body.radius);
+      const shouldUnsetRadius =
+        hasRadiusField &&
+        (clearRadius ||
+          parsedRadius == null ||
+          Number.isNaN(parsedRadius) ||
+          parsedRadius <= 0);
+      const shouldSetRadius =
+        hasRadiusField &&
+        !shouldUnsetRadius &&
+        parsedRadius != null &&
+        !Number.isNaN(parsedRadius) &&
+        parsedRadius > 0;
+
       // Handle image upload - supports both multipart form-data and base64 in JSON body
       // Also check for 'image_url' field (some frontends may send it with this name)
       const imageField = req.body.image || req.body.image_url;
@@ -326,9 +356,18 @@ export class LocationController {
         }
       }
 
+      const updateQuery: Record<string, unknown> = {};
+      if (shouldUnsetRadius) {
+        updateQuery.$unset = { radius: '', radius_unit: '' };
+      } else if (shouldSetRadius) {
+        updateData.radius = parsedRadius;
+        updateData.radius_unit = req.body.radius_unit === 'mi' ? 'mi' : 'km';
+      }
+      updateQuery.$set = updateData;
+
       const updatedLocation = await Location.findByIdAndUpdate(
         req.params.id,
-        updateData,
+        updateQuery,
         { new: true }
       );
 

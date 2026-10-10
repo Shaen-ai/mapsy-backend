@@ -217,6 +217,7 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
     const authHeader = req.headers.authorization;
 
     // If no instanceId, return defaults without creating/querying DB
+    // Keep compId from Wix header/query so settings can still build dashboard links
     if (!instanceId) {
       res.json({
         ...defaultWidgetConfig,
@@ -224,7 +225,7 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
         premiumPlanName: 'free',
         auth: {
           instanceId: null,
-          compId: null,
+          compId: compId || null,
           instanceToken: authHeader || null,
           isAuthenticated: !!authHeader
         }

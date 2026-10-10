@@ -51,4 +51,14 @@ export const validateLocation = [
   body('business_hours.fri').optional().isString(),
   body('business_hours.sat').optional().isString(),
   body('business_hours.sun').optional().isString(),
+
+  body('radius')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 0.1, max: 20000 })
+    .withMessage('Radius must be a number between 0.1 and 20000'),
+
+  body('radius_unit')
+    .optional({ nullable: true, checkFalsy: true })
+    .isIn(['km', 'mi'])
+    .withMessage('Radius unit must be km or mi'),
 ];

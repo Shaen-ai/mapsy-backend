@@ -21,6 +21,8 @@ export interface ILocation extends Document {
   image_url?: string;
   latitude?: number;
   longitude?: number;
+  radius?: number;
+  radius_unit?: 'km' | 'mi';
   instanceId?: string;  // Wix instance ID - links location to specific Wix site
   compId?: string; // Wix component ID - allows multiple widgets per site
   createdAt: Date;
@@ -76,6 +78,15 @@ const LocationSchema = new Schema<ILocation>(
       type: Number,
       min: -180,
       max: 180
+    },
+    radius: {
+      type: Number,
+      min: 0
+    },
+    radius_unit: {
+      type: String,
+      enum: ['km', 'mi'],
+      default: 'km'
     },
     instanceId: {
       type: String,
