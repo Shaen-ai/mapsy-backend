@@ -4,6 +4,46 @@ import geocodingService from '../services/geocodingService';
 import storageService from '../services/storageService';
 import { validationResult } from 'express-validator';
 
+/** Normalize FormData / JSON radius fields (trim strings, treat blank as empty). */
+function normalizeRadiusInput(body: Record<string, unknown>): {
+  hasRadiusField: boolean;
+  rawRadius: string | undefined;
+  parsedRadius: number | undefined;
+  radiusUnit: 'km' | 'mi';
+  shouldClear: boolean;
+} {
+  const hasRadiusField = Object.prototype.hasOwnProperty.call(body, 'radius');
+  const raw =
+    body.radius === undefined || body.radius === null
+      ? undefined
+      : String(body.radius).trim();
+
+  let parsedRadius: number | undefined;
+  if (hasRadiusField && raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (!Number.isNaN(n) && n > 0) {
+      parsedRadius = n;
+    }
+  }
+
+  const unitRaw =
+    body.radius_unit === undefined || body.radius_unit === null
+      ? ''
+      : String(body.radius_unit).trim();
+  const radiusUnit: 'km' | 'mi' = unitRaw === 'mi' ? 'mi' : 'km';
+
+  // Clear when field was sent but value is blank/invalid
+  const shouldClear = hasRadiusField && parsedRadius == null;
+
+  return {
+    hasRadiusField,
+    rawRadius: raw,
+    parsedRadius,
+    radiusUnit,
+    shouldClear,
+  };
+}
+
 // Default locations shown when no compId is provided (first-time widget load)
 const DEFAULT_LOCATIONS = [
   {
@@ -169,10 +209,12 @@ export class LocationController {
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const parsedRadius =
-        req.body.radius === '' || req.body.radius == null
-          ? undefined
-          : Number(req.body.radius);
+      const radiusInput = normalizeRadiusInput(req.body);
+      console.log('[create] radius input:', {
+        raw: radiusInput.rawRadius,
+        unit: req.body.radius_unit,
+        parsed: radiusInput.parsedRadius,
+      });
 
       const locationData: Partial<ILocation> = {
         name: req.body.name,
@@ -184,9 +226,9 @@ export class LocationController {
         business_hours: req.body.business_hours
       };
 
-      if (parsedRadius != null && !Number.isNaN(parsedRadius) && parsedRadius > 0) {
-        locationData.radius = parsedRadius;
-        locationData.radius_unit = req.body.radius_unit === 'mi' ? 'mi' : 'km';
+      if (radiusInput.parsedRadius != null) {
+        locationData.radius = radiusInput.parsedRadius;
+        locationData.radius_unit = radiusInput.radiusUnit;
       }
 
       if (req.wix && req.wix.instanceId) {
@@ -283,24 +325,18 @@ export class LocationController {
       };
 
       // Only touch radius when the client explicitly sent the field (FormData always does)
-      const hasRadiusField = Object.prototype.hasOwnProperty.call(req.body, 'radius');
-      const clearRadius =
-        hasRadiusField &&
-        (req.body.radius === '' || req.body.radius === null);
-      const parsedRadius =
-        !hasRadiusField || clearRadius ? undefined : Number(req.body.radius);
-      const shouldUnsetRadius =
-        hasRadiusField &&
-        (clearRadius ||
-          parsedRadius == null ||
-          Number.isNaN(parsedRadius) ||
-          parsedRadius <= 0);
+      const radiusInput = normalizeRadiusInput(req.body);
+      console.log('[update] radius input:', {
+        raw: radiusInput.rawRadius,
+        unit: req.body.radius_unit,
+        parsed: radiusInput.parsedRadius,
+        shouldClear: radiusInput.shouldClear,
+      });
+      const shouldUnsetRadius = radiusInput.hasRadiusField && radiusInput.shouldClear;
       const shouldSetRadius =
-        hasRadiusField &&
+        radiusInput.hasRadiusField &&
         !shouldUnsetRadius &&
-        parsedRadius != null &&
-        !Number.isNaN(parsedRadius) &&
-        parsedRadius > 0;
+        radiusInput.parsedRadius != null;
 
       // Handle image upload - supports both multipart form-data and base64 in JSON body
       // Also check for 'image_url' field (some frontends may send it with this name)
@@ -360,8 +396,8 @@ export class LocationController {
       if (shouldUnsetRadius) {
         updateQuery.$unset = { radius: '', radius_unit: '' };
       } else if (shouldSetRadius) {
-        updateData.radius = parsedRadius;
-        updateData.radius_unit = req.body.radius_unit === 'mi' ? 'mi' : 'km';
+        updateData.radius = radiusInput.parsedRadius;
+        updateData.radius_unit = radiusInput.radiusUnit;
       }
       updateQuery.$set = updateData;
 
