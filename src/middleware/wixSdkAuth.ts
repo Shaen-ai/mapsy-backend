@@ -2,10 +2,98 @@ import { Request, Response, NextFunction } from 'express';
 import { createClient, AppStrategy } from '@wix/sdk';
 import { appInstances } from '@wix/app-management';
 import axios from 'axios';
+import crypto from 'crypto';
 import NodeCache from 'node-cache';
 
 // Cache for verified tokens - TTL of 5 minutes (tokens are valid longer, but we want fresh data periodically)
 const tokenCache = new NodeCache({ stdTTL: 300, checkperiod: 60 });
+
+// Type for cached token data
+interface CachedWixData {
+  instanceId: string;
+  appDefId?: string;
+  vendorProductId?: string | null;
+  instanceData: any;
+}
+
+const normalizeBase64 = (segment: string) => {
+  const normalized = segment.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = (4 - (normalized.length % 4)) % 4;
+  return normalized + '='.repeat(padding);
+};
+
+/**
+ * Decode and verify Wix editor OauthNG.JWS tokens.
+ * Format: OauthNG.JWS.<header>.<payload>.<signature>
+ * Payload.data is a JSON string containing instance.instanceId.
+ */
+const verifyOauthNgJwsToken = (token: string, appSecret?: string): CachedWixData => {
+  const prefix = 'OauthNG.JWS.';
+  if (!token.startsWith(prefix)) {
+    throw new Error('Not an OauthNG.JWS token');
+  }
+
+  const jwtPart = token.slice(prefix.length);
+  const parts = jwtPart.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Invalid OauthNG.JWS token format');
+  }
+
+  const [headerSegment, payloadSegment, signatureSegment] = parts;
+
+  if (appSecret) {
+    const expectedSignature = crypto
+      .createHmac('sha256', appSecret)
+      .update(`${headerSegment}.${payloadSegment}`)
+      .digest('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    const providedSig = Buffer.from(normalizeBase64(signatureSegment), 'base64');
+    const expectedSig = Buffer.from(normalizeBase64(expectedSignature), 'base64');
+
+    if (
+      providedSig.length !== expectedSig.length ||
+      !crypto.timingSafeEqual(providedSig, expectedSig)
+    ) {
+      throw new Error('Invalid OauthNG.JWS signature');
+    }
+  }
+
+  const payloadJson = Buffer.from(normalizeBase64(payloadSegment), 'base64').toString('utf8');
+  const payload = JSON.parse(payloadJson);
+
+  let instanceData: any = payload;
+  if (typeof payload.data === 'string') {
+    try {
+      instanceData = JSON.parse(payload.data);
+    } catch {
+      instanceData = payload;
+    }
+  } else if (payload.data && typeof payload.data === 'object') {
+    instanceData = payload.data;
+  }
+
+  const instanceId =
+    instanceData?.instance?.instanceId ||
+    instanceData?.instanceId ||
+    payload?.instanceId;
+
+  if (!instanceId) {
+    throw new Error('OauthNG.JWS payload missing instanceId');
+  }
+
+  return {
+    instanceId,
+    appDefId: instanceData?.instance?.appDefId || instanceData?.appDefId,
+    vendorProductId:
+      instanceData?.instance?.vendorProductId || instanceData?.vendorProductId || null,
+    instanceData,
+  };
+};
+
+const isOauthNgJwsToken = (token: string): boolean => token.startsWith('OauthNG.JWS.');
 
 // Extend Express Request to include Wix data
 declare global {
@@ -67,14 +155,6 @@ const extractCompId = (req: Request): string | undefined => {
   console.log('[extractCompId] ================================');
   return undefined;
 };
-
-// Type for cached token data
-interface CachedWixData {
-  instanceId: string;
-  appDefId?: string;
-  vendorProductId?: string | null;
-  instanceData: any;
-}
 
 /**
  * Verify access token and get instance data using Wix SDK
@@ -142,7 +222,7 @@ const verifyAccessToken = async (accessToken: string, appId: string, appSecret: 
 export const verifyWixInstance = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization || '';
-    const accessToken = authHeader.replace('Bearer ', '');
+    const accessToken = authHeader.replace(/^Bearer\s+/i, '');
     const compId = extractCompId(req);
 
     const WIX_APP_ID = process.env.WIX_APP_ID;
@@ -162,7 +242,9 @@ export const verifyWixInstance = async (req: Request, res: Response, next: NextF
       return next();
     }
 
-    const wixData = await verifyAccessToken(accessToken, WIX_APP_ID, WIX_APP_SECRET);
+    const wixData = isOauthNgJwsToken(accessToken)
+      ? verifyOauthNgJwsToken(accessToken, WIX_APP_SECRET)
+      : await verifyAccessToken(accessToken, WIX_APP_ID, WIX_APP_SECRET);
 
     req.wix = {
       instanceId: wixData.instanceId,
@@ -193,7 +275,7 @@ export const optionalWixAuth = async (req: Request, _res: Response, next: NextFu
 
   try {
     const authHeader = req.headers.authorization || '';
-    const accessToken = authHeader.replace('Bearer ', '');
+    const accessToken = authHeader.replace(/^Bearer\s+/i, '');
 
     // If no auth token, but comp-id exists (editor mode), attach comp-id only
     if (!accessToken) {
@@ -209,6 +291,32 @@ export const optionalWixAuth = async (req: Request, _res: Response, next: NextFu
 
     const WIX_APP_ID = process.env.WIX_APP_ID;
     const WIX_APP_SECRET = process.env.WIX_APP_SECRET;
+
+    // Editor OauthNG.JWS tokens — decode locally (optionally verify with app secret)
+    if (isOauthNgJwsToken(accessToken)) {
+      try {
+        const wixData = verifyOauthNgJwsToken(accessToken, WIX_APP_SECRET);
+        req.wix = {
+          instanceId: wixData.instanceId,
+          appDefId: wixData.appDefId,
+          vendorProductId: wixData.vendorProductId,
+          compId,
+          decodedToken: wixData.instanceData,
+        };
+        console.log('[WixSDK] ✅ OauthNG.JWS verified for instance:', wixData.instanceId);
+        return next();
+      } catch (oauthErr: any) {
+        console.warn('[WixSDK] OauthNG.JWS verification failed:', oauthErr?.message);
+        if (compId) {
+          req.wix = {
+            instanceId: '',
+            compId,
+            decodedToken: null,
+          };
+        }
+        return next();
+      }
+    }
 
     if (!WIX_APP_ID || !WIX_APP_SECRET) {
       // Still attach comp-id if available

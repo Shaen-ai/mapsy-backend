@@ -1,6 +1,5 @@
-import express, { Application } from 'express';
+import express, { Application, Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
-import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import locationRoutes from './routes/locationRoutes';
@@ -14,18 +13,38 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 const app: Application = express();
 const PORT = process.env.PORT || 8001;
 
-// Middleware
-// For widget endpoints, allow all origins since widgets can be embedded anywhere
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow all origins for widget-specific endpoints
-    // In production, you might want to restrict this to specific domains
-    callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Wix-Comp-Id']
-}));
+const DEFAULT_CORS_HEADERS =
+  'Content-Type, Authorization, X-Requested-With, X-Wix-Comp-Id, X-Wix-Consistent';
+
+// Reflect Origin and requested headers so Wix editor preflights succeed
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+
+  const requestedHeaders = req.headers['access-control-request-headers'];
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    typeof requestedHeaders === 'string' && requestedHeaders.trim()
+      ? requestedHeaders
+      : DEFAULT_CORS_HEADERS
+  );
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
