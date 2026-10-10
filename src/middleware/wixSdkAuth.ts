@@ -307,12 +307,26 @@ export const optionalWixAuth = async (req: Request, _res: Response, next: NextFu
         return next();
       } catch (oauthErr: any) {
         console.warn('[WixSDK] OauthNG.JWS verification failed:', oauthErr?.message);
-        if (compId) {
+        // Signature may fail but payload still has instanceId — decode without verify
+        try {
+          const decoded = verifyOauthNgJwsToken(accessToken);
           req.wix = {
-            instanceId: '',
+            instanceId: decoded.instanceId,
+            appDefId: decoded.appDefId,
+            vendorProductId: decoded.vendorProductId,
             compId,
-            decodedToken: null,
+            decodedToken: decoded.instanceData,
           };
+          console.log('[WixSDK] ⚠️ OauthNG.JWS decoded without verify for instance:', decoded.instanceId);
+        } catch {
+          // Truly unreadable token — attach compId only when present (no empty instanceId)
+          if (compId) {
+            req.wix = {
+              instanceId: '',
+              compId,
+              decodedToken: null,
+            };
+          }
         }
         return next();
       }

@@ -151,13 +151,14 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
       // Return actual premium status from config (editor should see real status)
       const premiumPlanName = config?.premiumPlanName || 'free';
 
+      // Return DB result as-is — do not substitute defaults for empty/mismatched compId
       res.json({
         config: {
           ...(config?.widget_config || defaultWidgetConfig),
           widgetName: config?.widgetName || '',
           premiumPlanName // Return actual premium status
         },
-        locations: locations.length > 0 ? locations : DEFAULT_LOCATIONS
+        locations
       });
       return;
     }
@@ -172,13 +173,19 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
       keysToQuery.push(instanceFallbackKey);
     }
 
-    // Run config and locations queries in parallel
-    const [configs, locations] = await Promise.all([
-      AppConfig.find({ app_id: { $in: keysToQuery } }).lean(),
-      compId
-        ? Location.find({ instanceId, compId }).sort({ createdAt: -1 }).lean()
-        : Promise.resolve(null)
-    ]);
+    // Prefer scoped { instanceId, compId }; fall back to all instance locations
+    let locations: any[] = [];
+    if (compId) {
+      locations = await Location.find({ instanceId, compId }).sort({ createdAt: -1 }).lean();
+      if (locations.length === 0) {
+        console.log('[widget-data] No locations for compId, falling back to instanceId only');
+        locations = await Location.find({ instanceId }).sort({ createdAt: -1 }).lean();
+      }
+    } else {
+      locations = await Location.find({ instanceId }).sort({ createdAt: -1 }).lean();
+    }
+
+    const configs = await AppConfig.find({ app_id: { $in: keysToQuery } }).lean();
 
     // Find the best matching config (no fallback to mapsy-default, no creation)
     let config = configs.find(c => c.app_id === desiredKey)
@@ -214,13 +221,14 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
       console.log('[widget-data] ✅ Created new config for instanceId:', instanceId, 'compId:', compId);
     }
 
+    // Never substitute DEFAULT_LOCATIONS when we have an authenticated instance
     res.json({
       config: {
         ...(config?.widget_config || defaultWidgetConfig),
         widgetName: config?.widgetName || '',
         premiumPlanName
       },
-      locations: locations ?? DEFAULT_LOCATIONS
+      locations
     });
   } catch (error) {
     console.error('Error fetching widget data:', error);

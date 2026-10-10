@@ -44,6 +44,29 @@ function normalizeRadiusInput(body: Record<string, unknown>): {
   };
 }
 
+/** Resolve Wix identity after multer has parsed the body (auth runs before multer). */
+function resolveWixIdentity(req: Request): { instanceId?: string; compId?: string } {
+  const pick = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  };
+
+  const headerCompId = req.headers['x-wix-comp-id'];
+  const instanceId =
+    pick(req.wix?.instanceId) ||
+    pick(req.body?.instanceId) ||
+    pick(req.query?.instanceId);
+
+  const compId =
+    pick(req.wix?.compId) ||
+    pick(typeof headerCompId === 'string' ? headerCompId : Array.isArray(headerCompId) ? headerCompId[0] : undefined) ||
+    pick(req.body?.compId) ||
+    pick(req.query?.compId);
+
+  return { instanceId, compId };
+}
+
 // Default locations shown when no compId is provided (first-time widget load)
 const DEFAULT_LOCATIONS = [
   {
@@ -154,10 +177,8 @@ export class LocationController {
         const compId = req.wix.compId;
         if (compId) {
           filter.compId = compId;
-        } else {
-          // No compId provided - return default locations for preview/first-time load
-          return res.json(DEFAULT_LOCATIONS);
         }
+        // No compId: return all locations for this instance (do not use DEFAULT_LOCATIONS)
       } else {
         // No instance ID - dashboard access
         filter.instanceId = { $exists: false };
@@ -231,12 +252,19 @@ export class LocationController {
         locationData.radius_unit = radiusInput.radiusUnit;
       }
 
-      if (req.wix && req.wix.instanceId) {
-        locationData.instanceId = req.wix.instanceId;
-        if (req.wix.compId) {
-          locationData.compId = req.wix.compId;
-        }
+      // Stamp each field independently — do not gate compId on instanceId
+      const { instanceId, compId } = resolveWixIdentity(req);
+      if (instanceId) {
+        locationData.instanceId = instanceId;
       }
+      if (compId) {
+        locationData.compId = compId;
+      }
+      console.log('[create] Wix identity:', {
+        instanceId: instanceId || 'NONE',
+        compId: compId || 'NONE',
+        fromWix: !!req.wix,
+      });
 
       // Handle image upload - supports both multipart form-data and base64 in JSON body
       // Also check for 'image_url' field (some frontends may send it with this name)
@@ -278,6 +306,14 @@ export class LocationController {
 
       const location = new Location(locationData);
       await location.save();
+
+      console.log('[create] saved fields:', {
+        id: location._id,
+        radius: location.radius,
+        radius_unit: location.radius_unit,
+        instanceId: location.instanceId || 'NONE',
+        compId: location.compId || 'NONE',
+      });
 
       res.status(201).json(location);
     } catch (error) {
@@ -406,6 +442,13 @@ export class LocationController {
         updateQuery,
         { new: true }
       );
+
+      console.log('[update] saved radius fields:', {
+        id: updatedLocation?._id,
+        radius: updatedLocation?.radius,
+        radius_unit: updatedLocation?.radius_unit,
+        unset: shouldUnsetRadius,
+      });
 
       res.json(updatedLocation);
     } catch (error) {
