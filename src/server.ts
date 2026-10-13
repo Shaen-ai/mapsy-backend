@@ -105,6 +105,39 @@ const computeConfigKey = (instanceValue?: string, compValue?: string | null) => 
   return `mapsy-${instanceValue}${compValue ? `-${compValue}` : ''}`;
 };
 
+/** Read-only: resolve stored plan from AppConfig. Never invents from vendorProductId. */
+const resolveStoredPremiumPlan = async (
+  preferredConfig: { premiumPlanName?: string } | null | undefined,
+  instanceId?: string | null,
+  compId?: string | null
+): Promise<string> => {
+  if (preferredConfig?.premiumPlanName) {
+    return preferredConfig.premiumPlanName;
+  }
+
+  if (instanceId) {
+    const byInstance = await AppConfig.findOne({
+      instanceId,
+      premiumPlanName: { $exists: true, $ne: null }
+    }).lean();
+    if (byInstance?.premiumPlanName) {
+      return byInstance.premiumPlanName;
+    }
+  }
+
+  if (compId) {
+    const byComp = await AppConfig.findOne({
+      compId,
+      premiumPlanName: { $exists: true, $ne: null }
+    }).lean();
+    if (byComp?.premiumPlanName) {
+      return byComp.premiumPlanName;
+    }
+  }
+
+  return 'free';
+};
+
 // Combined endpoint - fetches both config and locations in a single request
 app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
   try {
@@ -148,15 +181,15 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
         Location.find({ compId }).sort({ createdAt: -1 }).lean()
       ]);
 
-      // Return actual premium status from config (editor should see real status)
-      const premiumPlanName = config?.premiumPlanName || 'free';
+      // Read-only plan from stored AppConfig (webhook is the only writer)
+      const premiumPlanName = await resolveStoredPremiumPlan(config, config?.instanceId, compId);
 
       // Return DB result as-is — do not substitute defaults for empty/mismatched compId
       res.json({
         config: {
           ...(config?.widget_config || defaultWidgetConfig),
           widgetName: config?.widgetName || '',
-          premiumPlanName // Return actual premium status
+          premiumPlanName
         },
         locations
       });
@@ -187,23 +220,16 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
 
     const configs = await AppConfig.find({ app_id: { $in: keysToQuery } }).lean();
 
-    // Find the best matching config (no fallback to mapsy-default, no creation)
+    // Find the best matching config (no fallback to mapsy-default)
     let config = configs.find(c => c.app_id === desiredKey)
       || configs.find(c => c.app_id === instanceFallbackKey)
       || null;
 
-    // Determine premium plan
-    let premiumPlanName: string;
-    if (config?.premiumPlanName) {
-      premiumPlanName = config.premiumPlanName;
-    } else if (req.wix?.vendorProductId) {
-      // If vendorProductId exists from Wix, treat as 'light' (basic premium)
-      premiumPlanName = 'light';
-    } else {
-      premiumPlanName = 'free';
-    }
+    // Read-only: plan comes only from stored AppConfig (webhook writes it)
+    const premiumPlanName = await resolveStoredPremiumPlan(config, instanceId, compId);
 
-    // Create new config if both instanceId and compId exist but no config found
+    // Create new config if both instanceId and compId exist but no config found.
+    // Do NOT set premiumPlanName — billing is webhook-only.
     if (!config && instanceId && compId) {
       console.log('[widget-data] No config found, creating new record with app_id:', desiredKey);
 
@@ -212,8 +238,7 @@ app.get('/api/widget-data', optionalWixAuth, async (req, res) => {
         instanceId,
         compId,
         widget_config: defaultWidgetConfig,
-        widgetName: '',
-        premiumPlanName
+        widgetName: ''
       });
 
       const savedConfig = await newConfig.save();
@@ -243,13 +268,15 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
     const compId = req.wix?.compId;
     const authHeader = req.headers.authorization;
 
-    // If no instanceId, return defaults without creating/querying DB
-    // Keep compId from Wix header/query so settings can still build dashboard links
+    // Editor / no instanceId: still read stored plan by compId (do not hardcode free)
     if (!instanceId) {
+      const config = compId ? await AppConfig.findOne({ compId }).lean() : null;
+      const premiumPlanName = await resolveStoredPremiumPlan(config, config?.instanceId, compId);
+
       res.json({
-        ...defaultWidgetConfig,
-        widgetName: '',
-        premiumPlanName: 'free',
+        ...(config?.widget_config || defaultWidgetConfig),
+        widgetName: config?.widgetName || '',
+        premiumPlanName,
         auth: {
           instanceId: null,
           compId: compId || null,
@@ -270,22 +297,16 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
 
     const configs = await AppConfig.find({ app_id: { $in: keysToQuery } }).lean();
 
-    // Find the best matching config (no fallback to mapsy-default, no creation)
+    // Find the best matching config (no fallback to mapsy-default)
     let config = configs.find(c => c.app_id === desiredKey)
       || configs.find(c => c.app_id === instanceFallbackKey)
       || null;
 
-    // Determine premium plan
-    let premiumPlanName: string;
-    if (config?.premiumPlanName) {
-      premiumPlanName = config.premiumPlanName;
-    } else if (req.wix?.vendorProductId) {
-      premiumPlanName = 'light';
-    } else {
-      premiumPlanName = 'free';
-    }
+    // Read-only: plan comes only from stored AppConfig (webhook writes it)
+    const premiumPlanName = await resolveStoredPremiumPlan(config, instanceId, compId);
 
-    // Create new record if not found and we have both instanceId and compId
+    // Create new record if not found and we have both instanceId and compId.
+    // Do NOT set premiumPlanName — billing is webhook-only.
     if (!config && instanceId && compId) {
       console.log('[widget-config] No config found, creating new record with app_id:', desiredKey);
 
@@ -294,8 +315,7 @@ app.get('/api/widget-config', optionalWixAuth, async (req, res) => {
         instanceId,
         compId,
         widget_config: defaultWidgetConfig,
-        widgetName: '',
-        premiumPlanName
+        widgetName: ''
       });
 
       const savedConfig = await newConfig.save();
@@ -327,8 +347,7 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
 
     const { widgetName, premiumPlanName, ...widgetConfigFields } = req.body;
 
-    /* 🔽 NEW: Settings panel update with compId-only (no auth required) */
-    // If we have a compId from header but no instanceId, update by compId only
+    /* Settings panel update with compId-only — widget fields only, never plan */
     if (compId && !instanceId) {
       console.log('[widget-config] 📝 Settings panel update with compId only:', compId);
 
@@ -342,12 +361,7 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
         updateDoc.$set.widgetName = widgetName;
       }
 
-      if (premiumPlanName !== undefined) {
-        const validPlans = ['free', 'light', 'business', 'business-pro'];
-        if (validPlans.includes(premiumPlanName)) {
-          updateDoc.$set.premiumPlanName = premiumPlanName;
-        }
-      }
+      // premiumPlanName is ignored — only the Laravel webhook may change the plan
 
       const config = await AppConfig.findOneAndUpdate(
         { compId },
@@ -368,7 +382,7 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       });
     }
 
-    /* 🔽 NEW: plan-only update (from Laravel webhook) */
+    /* Plan-only update — ONLY write path for premiumPlanName (Laravel webhook) */
     const isPlanOnlyUpdate =
       instanceId &&
       premiumPlanName !== undefined &&
@@ -381,20 +395,21 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
         return res.status(400).json({ error: 'Invalid premiumPlanName' });
       }
 
-
       const existingDocs = await AppConfig.find({ instanceId });
 
       if (existingDocs.length > 0) {
-        // Update all existing docs for this instance
         await AppConfig.updateMany(
           { instanceId },
           { $set: { premiumPlanName } }
         );
         console.log('[widget-config] Plan-only update for existing docs:', instanceId, premiumPlanName);
-
       } else {
-        // No docs exist → insert a single instance-level doc
-        const newDoc = new AppConfig({ instanceId, premiumPlanName });
+        // Instance-level doc with stable app_id so GETs can find the plan
+        const newDoc = new AppConfig({
+          app_id: computeConfigKey(instanceId, null),
+          instanceId,
+          premiumPlanName
+        });
         await newDoc.save();
         console.log('[widget-config] Plan-only insert (instance-level):', instanceId, premiumPlanName);
       }
@@ -405,7 +420,7 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       });
     }
 
-    /* ⬇️ EXISTING LOGIC (unchanged) */
+    /* Full widget-config save — widget fields only, never plan */
     const targetKey = computeConfigKey(instanceId, compId ?? null);
 
     const updateDoc: Record<string, any> = {
@@ -435,30 +450,7 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       updateDoc.$set.widgetName = widgetName;
     }
 
-    // Handle premium plan inheritance and instance-wide updates
-    if (premiumPlanName !== undefined) {
-      const validPlans = ['free', 'light', 'business', 'business-pro'];
-      if (validPlans.includes(premiumPlanName)) {
-        updateDoc.$set.premiumPlanName = premiumPlanName;
-        console.log('[widget-config] Saving premiumPlanName:', premiumPlanName);
-
-        // Update ALL apps under this instance with the new premium plan
-        if (instanceId) {
-          await AppConfig.updateMany(
-            { instanceId, app_id: { $ne: targetKey } },
-            { $set: { premiumPlanName } }
-          );
-          console.log('[widget-config] Updated premiumPlanName for all apps in instance:', instanceId);
-        }
-      }
-    } else if (instanceId) {
-      // No premiumPlanName provided - check if we need to inherit from existing apps
-      const existingApp = await AppConfig.findOne({ instanceId }).lean();
-      if (existingApp?.premiumPlanName) {
-        updateDoc.$set.premiumPlanName = existingApp.premiumPlanName;
-        console.log('[widget-config] Inheriting premiumPlanName from existing app:', existingApp.premiumPlanName);
-      }
-    }
+    // premiumPlanName is ignored here — only the plan-only webhook branch may change it
 
     const config = await AppConfig.findOneAndUpdate(
       { app_id: targetKey },
@@ -466,10 +458,12 @@ app.put('/api/widget-config', optionalWixAuth, async (req, res) => {
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
+    const resolvedPlan = await resolveStoredPremiumPlan(config, instanceId, compId);
+
     res.json({
       ...config.widget_config,
       widgetName: config.widgetName || '',
-      premiumPlanName: config.premiumPlanName || 'free'
+      premiumPlanName: resolvedPlan
     });
 
   } catch (error) {
@@ -528,17 +522,14 @@ app.get('/api/auth-info', optionalWixAuth, async (req, res) => {
   }
 });
 
-// Premium status check - used by widget to determine if it should show on published site
+// Premium status check — reads stored plan only (webhook is the only writer)
 app.get('/api/premium-status', optionalWixAuth, async (req, res) => {
   try {
     const vendorProductId = req.wix?.vendorProductId || null;
     const instanceId = req.wix?.instanceId || null;
+    const compId = req.wix?.compId || null;
 
-    // Determine premium plan based on vendorProductId
-    let premiumPlanName: string = 'free';
-    if (vendorProductId) {
-      premiumPlanName = 'light'; // Default to light if any vendorProductId exists
-    }
+    const premiumPlanName = await resolveStoredPremiumPlan(null, instanceId, compId);
 
     res.json({
       premiumPlanName,
